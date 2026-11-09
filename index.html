@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VACATION CHAMPIONS | Read • Play • Learn • Become a Champion!</title>
+    <meta name="description" content="Read • Play • Learn • Become a Champion! Educational gaming platform for Class 2 to Class 8 students with quizzes, 45 audio stories, creative drawing, brain puzzles, and rewards." />
+    <meta property="og:title" content="VACATION CHAMPIONS | Read • Play • Learn • Become a Champion!" />
+    <meta property="og:description" content="Read • Play • Learn • Become a Champion! Educational gaming platform for Class 2 to Class 8 students with quizzes, 45 audio stories, creative drawing, brain puzzles, and rewards." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Razorpay Official Standard Checkout Script -->
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <script>
+      // Gracefully handle Vite WebSocket / HMR disconnects in preview environments
+      window.addEventListener('unhandledrejection', function(event) {
+        if (event && event.reason) {
+          var msg = (event.reason.message || String(event.reason) || '');
+          if (msg.includes('WebSocket') || msg.includes('vite-hmr') || msg.includes('failed to connect to websocket')) {
+            event.preventDefault();
+            console.debug('[Vite HMR Guard] Handled gracefully:', msg);
+          }
+        }
+      });
+    </script>
+  </head>
+  <body class="bg-amber-50/40 text-slate-900 font-sans antialiased selection:bg-amber-200 selection:text-amber-900 min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

@@ -1,0 +1,746 @@
+import { PuzzleItem } from '../types';
+
+export const SEED_PUZZLES: PuzzleItem[] = [
+  // Class 2-3 (Easy Puzzles 1-15)
+  {
+    id: 'PUZ-C2-NUM-01',
+    title: 'The Missing Caterpillar Number',
+    category: 'number',
+    minClass: 2,
+    maxClass: 3,
+    prompt: 'Look at the crawling caterpillar segments: 12, 14, 16, [ ? ], 20. Which number fits in the blank?',
+    instructions: 'Identify the counting by 2s pattern.',
+    options: ['17', '18', '19', '21'],
+    correctAnswer: '18',
+    explanation: 'The numbers increase by adding 2 each time. 16 + 2 = 18.',
+    hint: 'Count forward by twos: 12, 14, 16...',
+    points: 25
+  },
+  {
+    id: 'PUZ-C2-ODD-01',
+    title: 'Odd One Out: Forest Friends',
+    category: 'odd_one_out',
+    minClass: 2,
+    maxClass: 3,
+    prompt: 'Which of the following does NOT belong with the others: Sparrow, Parrot, Eagle, Dolphin?',
+    instructions: 'Find the creature that lives in a different habitat or category.',
+    options: ['Sparrow', 'Parrot', 'Eagle', 'Dolphin'],
+    correctAnswer: 'Dolphin',
+    explanation: 'Sparrow, Parrot, and Eagle are winged birds, while the Dolphin is a marine mammal.',
+    hint: 'Three of these animals have feathers and wings.',
+    points: 20
+  },
+  {
+    id: 'PUZ-C2-WRD-01',
+    title: 'Missing Vowel in Animal Name',
+    category: 'word',
+    minClass: 2,
+    maxClass: 3,
+    prompt: 'Fill in the missing vowel to name our loyal pet: D _ G',
+    instructions: 'Pick the right English vowel.',
+    options: ['A', 'E', 'O', 'U'],
+    correctAnswer: 'O',
+    explanation: 'D + O + G spells DOG.',
+    hint: 'It rhymes with LOG and FOG.',
+    points: 15
+  },
+  {
+    id: 'PUZ-C2-LOG-01',
+    title: 'The Morning Mystery',
+    category: 'logic',
+    minClass: 2,
+    maxClass: 4,
+    prompt: 'I rise in the east, give warmth to all trees, and go to rest in the west. What am I?',
+    instructions: 'Solve this celestial riddle.',
+    options: ['The Moon', 'The Sun', 'A Cloud', 'An Airplane'],
+    correctAnswer: 'The Sun',
+    explanation: 'The Sun rises in the east and sets in the west each day.',
+    hint: 'You see me during the daytime shining brightly.',
+    points: 20
+  },
+  {
+    id: 'PUZ-C2-NUM-02',
+    title: 'Bunny Hop Addition',
+    category: 'number',
+    minClass: 2,
+    maxClass: 3,
+    prompt: 'A bunny hops 5 steps forward, then 3 steps forward, then 2 steps backward. How many steps is the bunny ahead of the start?',
+    instructions: 'Perform the forward additions and backward subtraction.',
+    options: ['5', '6', '8', '10'],
+    correctAnswer: '6',
+    explanation: '5 + 3 = 8 forward, minus 2 backward = 6 steps ahead.',
+    hint: 'Add 5 and 3, then subtract 2.',
+    points: 20
+  },
+  {
+    id: 'PUZ-C2-WRD-02',
+    title: 'Opposite of Tall',
+    category: 'word',
+    minClass: 2,
+    maxClass: 3,
+    prompt: 'Giraffes are tall, while puppies are [ ? ]. Which is the opposite word?',
+    instructions: 'Pick the direct antonym for tall.',
+    options: ['Big', 'Short', 'Heavy', 'Thin'],
+    correctAnswer: 'Short',
+    explanation: 'The opposite of tall is short.',
+    hint: 'Begins with the letter S.',
+    points: 15
+  },
+  {
+    id: 'PUZ-C2-ODD-02',
+    title: 'Fruit Basket Sorting',
+    category: 'odd_one_out',
+    minClass: 2,
+    maxClass: 4,
+    prompt: 'Which item does NOT belong: Apple, Banana, Potato, Mango?',
+    instructions: 'Determine which item is a vegetable rather than a fruit.',
+    options: ['Apple', 'Banana', 'Potato', 'Mango'],
+    correctAnswer: 'Potato',
+    explanation: 'Potato is a root vegetable, whereas apple, banana, and mango are fruits.',
+    hint: 'One of these grows underground and is commonly made into chips or fries.',
+    points: 20
+  },
+  {
+    id: 'PUZ-C2-LOG-02',
+    title: 'The Taller Sister',
+    category: 'logic',
+    minClass: 2,
+    maxClass: 4,
+    prompt: 'Pooja is taller than Riya. Riya is taller than Sneha. Who is the tallest among them?',
+    instructions: 'Compare the relative heights.',
+    options: ['Pooja', 'Riya', 'Sneha', 'Both are equal'],
+    correctAnswer: 'Pooja',
+    explanation: 'Since Pooja > Riya and Riya > Sneha, Pooja is the tallest.',
+    hint: 'Pooja is taller than Riya who is already taller than Sneha.',
+    points: 20
+  },
+  {
+    id: 'PUZ-C2-NUM-03',
+    title: 'Ten-Frame Balance',
+    category: 'number',
+    minClass: 2,
+    maxClass: 3,
+    prompt: 'How much must you add to 7 to make a perfect ten?',
+    instructions: 'Solve 7 + [ ? ] = 10.',
+    options: ['2', '3', '4', '5'],
+    correctAnswer: '3',
+    explanation: '10 - 7 = 3.',
+    hint: 'Hold up 7 fingers; how many more to make 10?',
+    points: 15
+  },
+  {
+    id: 'PUZ-C2-SEQ-01',
+    title: 'Rainbow Colors Order',
+    category: 'sequence',
+    minClass: 2,
+    maxClass: 4,
+    prompt: 'In VIBGYOR, what color comes immediately after Violet and Indigo?',
+    instructions: 'Recall the letters of VIBGYOR.',
+    options: ['Green', 'Blue', 'Yellow', 'Red'],
+    correctAnswer: 'Blue',
+    explanation: 'V - I - B: Violet, Indigo, Blue.',
+    hint: 'The letter B stands for this color.',
+    points: 20
+  },
+  {
+    id: 'PUZ-C3-MAT-01',
+    title: 'Wheels on the Vehicles',
+    category: 'math',
+    minClass: 3,
+    maxClass: 4,
+    prompt: 'Rahul has 2 bicycles and 1 tricycle. How many wheels are there in total?',
+    instructions: 'Bicycle has 2 wheels; tricycle has 3 wheels.',
+    options: ['5', '6', '7', '8'],
+    correctAnswer: '7',
+    explanation: '2 bicycles × 2 = 4 wheels. 1 tricycle = 3 wheels. 4 + 3 = 7 wheels.',
+    hint: '2 times 2 is 4; add 3 to it.',
+    points: 25
+  },
+  {
+    id: 'PUZ-C3-LOG-01',
+    title: 'The Heavy Feather Riddle',
+    category: 'logic',
+    minClass: 3,
+    maxClass: 5,
+    prompt: 'Which weighs more: 1 kilogram of iron nails or 1 kilogram of cotton feathers?',
+    instructions: 'Check the units of weight carefully.',
+    options: ['1 kg Iron nails', '1 kg Cotton feathers', 'They weigh the exact same', 'Depends on gravity'],
+    correctAnswer: 'They weigh the exact same',
+    explanation: 'Both weigh exactly 1 kilogram.',
+    hint: 'Both are measured as 1 kg!',
+    points: 25
+  },
+  {
+    id: 'PUZ-C3-WRD-03',
+    title: 'Compound Word Creator',
+    category: 'word',
+    minClass: 3,
+    maxClass: 5,
+    prompt: 'Join "SUN" + "FLOWER" to make a single flower name. What is it?',
+    instructions: 'Combine the two words.',
+    options: ['Moonflower', 'Sunflower', 'Sunplant', 'Starflower'],
+    correctAnswer: 'Sunflower',
+    explanation: 'Sun + Flower = Sunflower.',
+    hint: 'This yellow flower faces the sun.',
+    points: 20
+  },
+  {
+    id: 'PUZ-C3-NUM-04',
+    title: 'Even Number Spotter',
+    category: 'number',
+    minClass: 2,
+    maxClass: 4,
+    prompt: 'Which of the following numbers is an EVEN number: 13, 21, 38, 47?',
+    instructions: 'Even numbers end in 0, 2, 4, 6, or 8.',
+    options: ['13', '21', '38', '47'],
+    correctAnswer: '38',
+    explanation: '38 ends in 8, so it is divisible by 2.',
+    hint: 'Look at the last digit.',
+    points: 20
+  },
+  {
+    id: 'PUZ-C3-SEQ-02',
+    title: 'Tens Countdown',
+    category: 'sequence',
+    minClass: 2,
+    maxClass: 4,
+    prompt: 'Fill in the blank: 90, 80, 70, [ ? ], 50.',
+    instructions: 'Subtract 10 each step.',
+    options: ['65', '60', '55', '75'],
+    correctAnswer: '60',
+    explanation: 'Counting down by 10s: 70 - 10 = 60.',
+    hint: 'What comes between 70 and 50 when counting by tens?',
+    points: 20
+  },
+
+  // Class 4-5 (Medium Puzzles 16-35)
+  {
+    id: 'PUZ-C4-MAT-01',
+    title: 'Magic Triangle Balance',
+    category: 'math',
+    minClass: 4,
+    maxClass: 5,
+    prompt: 'If Triangle + Triangle = 24, and Triangle + Circle = 19, what is the value of Circle?',
+    instructions: 'Use substitution to find the hidden value of the circle.',
+    options: ['5', '7', '9', '12'],
+    correctAnswer: '7',
+    explanation: '2 Triangles = 24, so 1 Triangle = 12. Then 12 + Circle = 19; Circle = 19 - 12 = 7.',
+    hint: 'First find the value of one Triangle by dividing 24 by 2.',
+    points: 30
+  },
+  {
+    id: 'PUZ-C4-SEQ-01',
+    title: 'Geometric Series Step',
+    category: 'sequence',
+    minClass: 4,
+    maxClass: 6,
+    prompt: 'What is the next number in this multiplying series: 3, 6, 12, 24, [ ? ]',
+    instructions: 'Find the multiplying factor.',
+    options: ['36', '48', '30', '52'],
+    correctAnswer: '48',
+    explanation: 'Each consecutive term doubles: 3×2=6, 6×2=12, 12×2=24, 24×2=48.',
+    hint: 'Notice that each number is doubled.',
+    points: 30
+  },
+  {
+    id: 'PUZ-C4-LOG-02',
+    title: 'The Clock Face Riddle',
+    category: 'logic',
+    minClass: 4,
+    maxClass: 6,
+    prompt: 'At what time do the hour hand and minute hand of an analog clock point in exactly opposite directions making a straight 180° line?',
+    instructions: 'Think about positions on an analog clock dial.',
+    options: ['12:00', '6:00', '3:45', '9:15'],
+    correctAnswer: '6:00',
+    explanation: 'At 6:00, the hour hand points straight down at 6, and the minute hand points straight up at 12.',
+    hint: 'One hand points directly at the top (12) and the other straight at the bottom.',
+    points: 35
+  },
+  {
+    id: 'PUZ-C4-WRD-02',
+    title: 'Anagram Solver: Great Creature',
+    category: 'word',
+    minClass: 4,
+    maxClass: 6,
+    prompt: 'Unscramble the letters: "T E E L P H N A" to reveal a giant mammal with a long trunk.',
+    instructions: 'Rearrange all letters into a single animal name.',
+    options: ['PANTHER', 'ELEPHANT', 'ANTELOPE', 'CHEETAH'],
+    correctAnswer: 'ELEPHANT',
+    explanation: 'T-E-E-L-P-H-N-A unscrambles into ELEPHANT.',
+    hint: 'The largest land animal on Earth.',
+    points: 30
+  },
+  {
+    id: 'PUZ-C4-MAT-02',
+    title: 'Square Garden Perimeter',
+    category: 'math',
+    minClass: 4,
+    maxClass: 6,
+    prompt: 'A square playground has each side measuring 15 meters. What is the total perimeter around the playground?',
+    instructions: 'Perimeter of a square = 4 × side length.',
+    options: ['30 m', '45 m', '60 m', '75 m'],
+    correctAnswer: '60 m',
+    explanation: '4 × 15 = 60 meters.',
+    hint: 'Multiply 15 by 4 sides.',
+    points: 30
+  },
+  {
+    id: 'PUZ-C4-LOG-03',
+    title: 'The Matchstick Riddle',
+    category: 'logic',
+    minClass: 4,
+    maxClass: 6,
+    prompt: 'You enter a dark room with a single matchstick. In the room, there is a candle, an oil lamp, and a wood fireplace. Which one do you light FIRST?',
+    instructions: 'Think about the physical source of flame.',
+    options: ['The Candle', 'The Oil Lamp', 'The Matchstick', 'The Fireplace'],
+    correctAnswer: 'The Matchstick',
+    explanation: 'You must first strike and light the matchstick before you can light anything else!',
+    hint: 'What must catch fire before the candle can burn?',
+    points: 35
+  },
+  {
+    id: 'PUZ-C4-NUM-05',
+    title: 'Roman Numeral Translator',
+    category: 'number',
+    minClass: 4,
+    maxClass: 6,
+    prompt: 'What Arabic number does Roman numeral "XLV" represent?',
+    instructions: 'XL is 40; V is 5.',
+    options: ['35', '45', '55', '65'],
+    correctAnswer: '45',
+    explanation: 'XL = 50 - 10 = 40. V = 5. So XLV = 45.',
+    hint: 'L is 50, so XL is 10 less than 50.',
+    points: 30
+  },
+  {
+    id: 'PUZ-C4-SEQ-03',
+    title: 'Square Numbers Pattern',
+    category: 'sequence',
+    minClass: 4,
+    maxClass: 6,
+    prompt: 'Look at the series: 1, 4, 9, 16, 25, [ ? ]. What is the next term?',
+    instructions: 'Find the consecutive square numbers: 1², 2², 3², 4², 5²...',
+    options: ['30', '34', '36', '49'],
+    correctAnswer: '36',
+    explanation: 'These are squares of numbers 1 to 6. 6² = 36.',
+    hint: 'What is 6 times 6?',
+    points: 35
+  },
+  {
+    id: 'PUZ-C4-WRD-04',
+    title: 'Palindrome Word Search',
+    category: 'word',
+    minClass: 4,
+    maxClass: 6,
+    prompt: 'A palindrome reads the exact same forwards and backwards. Which of these words is a palindrome?',
+    instructions: 'Check letter reversal.',
+    options: ['LEVEL', 'LEVER', 'LEVERAGE', 'LEADER'],
+    correctAnswer: 'LEVEL',
+    explanation: 'L-E-V-E-L backwards is L-E-V-E-L.',
+    hint: 'Read the word from right to left.',
+    points: 30
+  },
+  {
+    id: 'PUZ-C4-MAT-03',
+    title: 'Equal Candy Division',
+    category: 'math',
+    minClass: 4,
+    maxClass: 5,
+    prompt: 'Rohit has 48 toffees. He wants to distribute them equally among 6 friends. How many toffees does each friend receive?',
+    instructions: 'Calculate 48 ÷ 6.',
+    options: ['6', '7', '8', '9'],
+    correctAnswer: '8',
+    explanation: '48 divided by 6 is 8.',
+    hint: '8 times 6 is 48.',
+    points: 25
+  },
+  {
+    id: 'PUZ-C5-LOG-01',
+    title: 'The Silent Messenger',
+    category: 'logic',
+    minClass: 4,
+    maxClass: 7,
+    prompt: 'I speak without a mouth and hear without ears. I have no body, but I come alive with wind. What am I?',
+    instructions: 'Solve this natural acoustics riddle.',
+    options: ['An Echo', 'A Bell', 'A Shadow', 'A Cloud'],
+    correctAnswer: 'An Echo',
+    explanation: 'An echo repeats spoken sound without possessing mouth or ears.',
+    hint: 'Shout into a valley and it calls back.',
+    points: 35
+  },
+  {
+    id: 'PUZ-C5-MAT-04',
+    title: 'Fraction Comparison',
+    category: 'math',
+    minClass: 4,
+    maxClass: 6,
+    prompt: 'Which fraction is the LARGEST in value: 1/2, 1/3, 1/4, or 1/5?',
+    instructions: 'Compare unit fractions; smaller denominator means larger slice.',
+    options: ['1/2', '1/3', '1/4', '1/5'],
+    correctAnswer: '1/2',
+    explanation: '1/2 is half (0.5), which is greater than 1/3 (0.33) or 1/4 (0.25).',
+    hint: 'Dividing an apple into only 2 pieces gives bigger pieces than dividing into 5.',
+    points: 30
+  },
+  {
+    id: 'PUZ-C5-ODD-03',
+    title: 'Geometric Shapes Odd One',
+    category: 'odd_one_out',
+    minClass: 4,
+    maxClass: 6,
+    prompt: 'Which shape is the odd one out: Square, Rectangle, Rhombus, Circle?',
+    instructions: 'Consider straight line edges vs curved boundary.',
+    options: ['Square', 'Rectangle', 'Rhombus', 'Circle'],
+    correctAnswer: 'Circle',
+    explanation: 'Square, Rectangle, and Rhombus are 4-sided polygons, while a circle is a curved shape with no corners.',
+    hint: 'Three of these have corners and four straight sides.',
+    points: 25
+  },
+  {
+    id: 'PUZ-C5-NUM-06',
+    title: 'Reverse Sum Challenge',
+    category: 'number',
+    minClass: 4,
+    maxClass: 6,
+    prompt: 'Take the two-digit number 47. Reverse its digits to get 74. What is the sum of 47 and 74?',
+    instructions: 'Add 47 + 74.',
+    options: ['111', '121', '131', '141'],
+    correctAnswer: '121',
+    explanation: '47 + 74 = 121 (which is 11 × (4+7)).',
+    hint: '7 plus 4 is 11; carry 1 over.',
+    points: 30
+  },
+  {
+    id: 'PUZ-C5-SEQ-04',
+    title: 'Alternating Plus and Minus',
+    category: 'sequence',
+    minClass: 4,
+    maxClass: 6,
+    prompt: 'Look at the sequence: 10, 15, 12, 17, 14, [ ? ]. What is the next number?',
+    instructions: 'Identify the pattern: +5, -3, +5, -3...',
+    options: ['16', '18', '19', '21'],
+    correctAnswer: '19',
+    explanation: '14 + 5 = 19.',
+    hint: 'After adding 5, subtract 3, then add 5 again.',
+    points: 35
+  },
+
+  // Class 6-8 (Advanced Puzzles 36-52)
+  {
+    id: 'PUZ-C6-MAT-01',
+    title: 'The Prime Puzzle Grid',
+    category: 'math',
+    minClass: 6,
+    maxClass: 8,
+    prompt: 'Which of the following is the only EVEN prime number in all of mathematics?',
+    instructions: 'Recall the definition of prime numbers.',
+    options: ['0', '2', '4', '6'],
+    correctAnswer: '2',
+    explanation: '2 is the only even number whose only factors are 1 and itself. All other even numbers are divisible by 2.',
+    hint: 'It is also the smallest prime number.',
+    points: 40
+  },
+  {
+    id: 'PUZ-C6-LOG-01',
+    title: 'The River Crossing Enigma',
+    category: 'logic',
+    minClass: 6,
+    maxClass: 8,
+    prompt: 'A traveler needs to cross a river with a wolf, a goat, and cabbage. If left alone, the wolf eats the goat, or the goat eats the cabbage. Which item MUST the traveler carry across on the first trip?',
+    instructions: 'Evaluate safe pairings on the riverbanks.',
+    options: ['The Wolf', 'The Cabbage', 'The Goat', 'None, swim alone'],
+    correctAnswer: 'The Goat',
+    explanation: 'Taking the goat first leaves the wolf with the cabbage, which is safe because wolves do not eat vegetables.',
+    hint: 'Wolf will not eat cabbage, so leaving them alone together is safe.',
+    points: 45
+  },
+  {
+    id: 'PUZ-C6-SUD-01',
+    title: 'Mini 4x4 Sudoku Cell Value',
+    category: 'sudoku',
+    minClass: 5,
+    maxClass: 8,
+    prompt: 'In a 4x4 grid row with digits [ 1, 3, 4, [ ? ] ], where every row must have numbers 1 through 4 exactly once, what is the missing digit?',
+    instructions: 'Identify which digit from 1 to 4 is absent.',
+    options: ['1', '2', '3', '4'],
+    correctAnswer: '2',
+    explanation: 'The digits present are 1, 3, 4. The missing digit is 2.',
+    hint: 'Each number from 1 to 4 appears only once.',
+    points: 35
+  },
+  {
+    id: 'PUZ-C6-SEQ-02',
+    title: 'Fibonacci Ascent',
+    category: 'sequence',
+    minClass: 6,
+    maxClass: 8,
+    prompt: 'In the Fibonacci sequence: 1, 1, 2, 3, 5, 8, 13, [ ? ], what is the next number?',
+    instructions: 'Each term is the sum of the two preceding terms.',
+    options: ['18', '20', '21', '24'],
+    correctAnswer: '21',
+    explanation: '8 + 13 = 21.',
+    hint: 'Add the last two numbers: 8 + 13.',
+    points: 40
+  },
+  {
+    id: 'PUZ-C6-MAT-05',
+    title: 'Speed, Time, and Distance',
+    category: 'math',
+    minClass: 6,
+    maxClass: 8,
+    prompt: 'A train travels at a speed of 60 km per hour. How many kilometers will it cover in 2 hours and 30 minutes?',
+    instructions: 'Distance = Speed × Time. (2.5 hours)',
+    options: ['120 km', '135 km', '150 km', '180 km'],
+    correctAnswer: '150 km',
+    explanation: '60 × 2.5 = 150 km.',
+    hint: 'In 2 hours: 120 km; in half an hour: 30 km.',
+    points: 40
+  },
+  {
+    id: 'PUZ-C6-LOG-04',
+    title: 'The Three Light Bulbs Mystery',
+    category: 'logic',
+    minClass: 6,
+    maxClass: 8,
+    prompt: 'Outside a closed room are 3 light switches (A, B, C). Inside the room are 3 incandescent light bulbs. You may enter the room only once. How can you tell which switch connects to which bulb?',
+    instructions: 'Use heat emission in addition to light.',
+    options: [
+      'Turn on A for 10 min, turn off A, turn on B, and enter',
+      'Turn on all three switches together',
+      'Turn on A and C together',
+      'Flip switches randomly while watching under the door'
+    ],
+    correctAnswer: 'Turn on A for 10 min, turn off A, turn on B, and enter',
+    explanation: 'The bulb that is ON is B. The bulb that is OFF but WARM is A. The bulb that is OFF and COLD is C.',
+    hint: 'Incandescent light bulbs become hot when left turned on for several minutes.',
+    points: 50
+  },
+  {
+    id: 'PUZ-C7-MAT-01',
+    title: 'Angle of Clock Hands at 3:15',
+    category: 'math',
+    minClass: 7,
+    maxClass: 8,
+    prompt: 'At 3:15, what is the exact angle between the hour hand and the minute hand?',
+    instructions: 'The minute hand is at 15 (90°). In 15 minutes, the hour hand moves 15 × 0.5° = 7.5° past 3.',
+    options: ['0°', '7.5°', '15°', '22.5°'],
+    correctAnswer: '7.5°',
+    explanation: 'At 3:15, the minute hand is at 90°, but the hour hand has moved 7.5° forward (0.5° per minute). 97.5° - 90° = 7.5°.',
+    hint: 'Remember that the hour hand does not stay fixed on 3 while the minute hand moves to 15.',
+    points: 45
+  },
+  {
+    id: 'PUZ-C7-LOG-05',
+    title: 'The Truth Teller and Liar',
+    category: 'logic',
+    minClass: 7,
+    maxClass: 8,
+    prompt: 'At a fork in the road leading to Champion City, there are two twins. One ALWAYS tells the truth, and one ALWAYS lies. You may ask ONE twin ONE question. What question reveals the correct road?',
+    instructions: 'Formulate a double negation question.',
+    options: [
+      '"Which road would your twin say leads to Champion City?" and take the opposite road',
+      '"Are you the truth teller?"',
+      '"Where do you live?"',
+      '"Is Champion City far from here?"'
+    ],
+    correctAnswer: '"Which road would your twin say leads to Champion City?" and take the opposite road',
+    explanation: 'Both the truth-teller (reporting the liar’s lie) and the liar (lying about the truth-teller) will point to the WRONG road. So you simply take the other path!',
+    hint: 'Ask what the other person would say.',
+    points: 50
+  },
+  {
+    id: 'PUZ-C7-NUM-07',
+    title: 'Cubic Discovery',
+    category: 'number',
+    minClass: 6,
+    maxClass: 8,
+    prompt: 'What is the value of 5 cubed (5³)?',
+    instructions: 'Compute 5 × 5 × 5.',
+    options: ['25', '75', '125', '150'],
+    correctAnswer: '125',
+    explanation: '5 × 5 = 25, and 25 × 5 = 125.',
+    hint: 'Multiply 5 by itself three times.',
+    points: 35
+  },
+  {
+    id: 'PUZ-C7-SUD-02',
+    title: '6x6 Sudoku Grid Block Rule',
+    category: 'sudoku',
+    minClass: 6,
+    maxClass: 8,
+    prompt: 'In a standard 6x6 Sudoku puzzle, what are the dimensions of each mini grid box?',
+    instructions: '6x6 Sudoku is divided into 6 equal rectangular regions.',
+    options: ['2 rows by 3 columns', '3 rows by 3 columns', '1 row by 6 columns', '4 rows by 2 columns'],
+    correctAnswer: '2 rows by 3 columns',
+    explanation: '6x6 Sudoku uses 2×3 blocks (2 rows and 3 columns) containing numbers 1 through 6.',
+    hint: '2 multiplied by 3 gives 6.',
+    points: 40
+  },
+  {
+    id: 'PUZ-C7-MAT-06',
+    title: 'Average Marks Calculation',
+    category: 'math',
+    minClass: 6,
+    maxClass: 8,
+    prompt: 'Ananya scored 85, 90, and 95 marks in three quiz rounds. What is her average mark?',
+    instructions: 'Average = Sum of items ÷ Total items.',
+    options: ['88', '90', '92', '95'],
+    correctAnswer: '90',
+    explanation: '(85 + 90 + 95) / 3 = 270 / 3 = 90.',
+    hint: 'The middle number between 85 and 95 with equal spacing is 90.',
+    points: 35
+  },
+  {
+    id: 'PUZ-C8-LOG-06',
+    title: 'The Counterfeit Gold Coin',
+    category: 'logic',
+    minClass: 7,
+    maxClass: 8,
+    prompt: 'You have 9 identical-looking gold coins, but one is counterfeit and slightly LIGHTER. Using a balance scale with two pans, what is the MINIMUM number of weighings needed to guarantee finding the lighter coin?',
+    instructions: 'Divide the 9 coins into groups of 3.',
+    options: ['1', '2', '3', '4'],
+    correctAnswer: '2',
+    explanation: 'Weigh 3 coins vs 3 coins. If balanced, it is in the other 3. Then from those 3, weigh 1 vs 1. In just 2 weighings, the lighter coin is guaranteed!',
+    hint: 'Divide 9 into 3 groups of 3 coins each.',
+    points: 50
+  },
+  {
+    id: 'PUZ-C8-MAT-07',
+    title: 'Sum of First 10 Natural Numbers',
+    category: 'math',
+    minClass: 6,
+    maxClass: 8,
+    prompt: 'Using Gauss’s formula n(n+1)/2, what is the sum of integers from 1 to 10?',
+    instructions: '10 × 11 ÷ 2.',
+    options: ['45', '50', '55', '60'],
+    correctAnswer: '55',
+    explanation: '10 × 11 / 2 = 110 / 2 = 55.',
+    hint: 'Pair 1+10, 2+9, 3+8, 4+7, 5+6: there are five pairs of 11.',
+    points: 40
+  },
+  {
+    id: 'PUZ-C8-SEQ-05',
+    title: 'Powers of Two Expansion',
+    category: 'sequence',
+    minClass: 6,
+    maxClass: 8,
+    prompt: 'Look at the binary computing progression: 2, 4, 8, 16, 32, 64, [ ? ]. What is the next byte value?',
+    instructions: 'Double 64.',
+    options: ['96', '100', '128', '256'],
+    correctAnswer: '128',
+    explanation: '64 × 2 = 128 (2⁷).',
+    hint: 'Double the previous number.',
+    points: 40
+  },
+  {
+    id: 'PUZ-C8-WRD-05',
+    title: 'Prefix Master',
+    category: 'word',
+    minClass: 6,
+    maxClass: 8,
+    prompt: 'Which Greek prefix means "thousand" in metric units (like meter, gram, watt)?',
+    instructions: 'Identify the metric prefix for 1,000.',
+    options: ['Centi-', 'Milli-', 'Kilo-', 'Mega-'],
+    correctAnswer: 'Kilo-',
+    explanation: 'Kilo- means 1,000 (e.g., 1 kilometre = 1,000 metres).',
+    hint: 'Think of kilogram and kilometre.',
+    points: 35
+  },
+  {
+    id: 'PUZ-C8-LOG-07',
+    title: 'The Burning Ropes Timer',
+    category: 'logic',
+    minClass: 7,
+    maxClass: 8,
+    prompt: 'You have two non-uniform ropes. Each rope takes exactly 60 minutes to burn completely, but burns at uneven speeds. How can you measure exactly 45 minutes?',
+    instructions: 'Light one rope at both ends and the second at one end.',
+    options: [
+      'Light rope 1 at both ends and rope 2 at one end; when rope 1 burns out (30 min), light the other end of rope 2 (15 min more)',
+      'Cut both ropes into three equal lengths with a ruler',
+      'Light one rope from the middle and wait for it to reach both ends',
+      'Light both ropes at one end and blow one out halfway'
+    ],
+    correctAnswer: 'Light rope 1 at both ends and rope 2 at one end; when rope 1 burns out (30 min), light the other end of rope 2 (15 min more)',
+    explanation: 'Rope 1 burning from both ends takes 30 minutes. At that exact moment, 30 min remain on rope 2. Lighting its second end makes that remainder burn in 15 minutes! Total = 30 + 15 = 45 minutes.',
+    hint: 'Lighting a rope from both ends burns it in half the normal time.',
+    points: 50
+  },
+  {
+    id: 'PUZ-C8-SUD-03',
+    title: '9x9 Sudoku Master Rule',
+    category: 'sudoku',
+    minClass: 6,
+    maxClass: 8,
+    prompt: 'In a complete 9x9 Sudoku puzzle, what is the sum of all digits in any single completed row, column, or 3x3 block?',
+    instructions: 'Sum of digits 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9.',
+    options: ['40', '45', '50', '55'],
+    correctAnswer: '45',
+    explanation: '1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 = 45.',
+    hint: 'Use the formula n(n+1)/2 with n=9.',
+    points: 45
+  }
+];
+
+export const DRAWING_TOPICS = [
+  { id: 'dt-1', name: 'Nature and Scenery', icon: 'SunMedium', hint: 'Mountains, sunrise, winding river, and green trees' },
+  { id: 'dt-2', name: 'Animals and Birds', icon: 'Feather', hint: 'Cute peacock, playful puppy, or regal lion' },
+  { id: 'dt-3', name: 'Flowers and Gardens', icon: 'Flower2', hint: 'Lotus pond, blooming sunflowers, and butterflies' },
+  { id: 'dt-4', name: 'Festivals and Celebrations', icon: 'Sparkles', hint: 'Diwali diyas, Holi colors, or kite flying' },
+  { id: 'dt-5', name: 'Cartoon Characters', icon: 'Smile', hint: 'Friendly smiling superhero or fantasy dragon' },
+  { id: 'dt-6', name: 'Vehicles & Transport', icon: 'Rocket', hint: 'Steam locomotive, rocket ship, or solar race car' },
+  { id: 'dt-7', name: 'Fruits and Vegetables', icon: 'Apple', hint: 'Fruit basket with mangoes, bananas, and cherries' },
+  { id: 'dt-8', name: 'My School', icon: 'School', hint: 'School building with playground and national flag' },
+  { id: 'dt-9', name: 'My Loving Family', icon: 'Heart', hint: 'Family picnic, sharing dinner, or holding hands' },
+  { id: 'dt-10', name: 'Save Environment', icon: 'TreePine', hint: 'Clean blue earth, recycling bin, and planting trees' },
+  { id: 'dt-11', name: 'Indian Culture & Heritage', icon: 'Landmark', hint: 'Historical fort, classical dancer, or rangoli' },
+  { id: 'dt-12', name: 'Space and Planets', icon: 'Orbit', hint: 'Saturn rings, lunar astronaut, and glowing stars' },
+  { id: 'dt-13', name: 'Creative Imagination', icon: 'Palette', hint: 'Floating castle in the clouds or candy kingdom' }
+];
+
+export const COLOURING_TEMPLATES = [
+  {
+    id: 'col-1',
+    title: 'Happy Elephant in the Forest',
+    category: 'Animals',
+    classLevel: 'Class 2–4',
+    svgOutline: `<svg viewBox="0 0 200 200" class="w-full h-full stroke-slate-900 fill-white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="100" cy="90" r="45" fill="none" />
+      <path d="M 65 90 C 45 90, 45 130, 65 140 C 75 145, 80 120, 80 100" fill="none" />
+      <circle cx="85" cy="80" r="5" fill="#1e293b" />
+      <path d="M 100 120 C 100 150, 90 170, 75 165 C 65 160, 70 145, 80 140" fill="none" />
+      <path d="M 140 100 C 160 100, 160 140, 140 145" fill="none" />
+      <rect x="70" y="140" width="16" height="40" rx="6" fill="none" />
+      <rect x="110" y="140" width="16" height="40" rx="6" fill="none" />
+      <path d="M 135 145 C 150 150, 150 160, 145 165" fill="none" />
+    </svg>`
+  },
+  {
+    id: 'col-2',
+    title: 'Cosmic Rocket Among Stars',
+    category: 'Space',
+    classLevel: 'Class 4–8',
+    svgOutline: `<svg viewBox="0 0 200 200" class="w-full h-full stroke-slate-900 fill-white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M 100 25 C 80 50, 75 110, 75 135 L 125 135 C 125 110, 120 50, 100 25 Z" fill="none" />
+      <circle cx="100" cy="80" r="14" fill="none" />
+      <path d="M 75 110 L 50 140 L 75 135 Z" fill="none" />
+      <path d="M 125 110 L 150 140 L 125 135 Z" fill="none" />
+      <path d="M 85 135 L 80 160 L 100 150 L 120 160 L 115 135 Z" fill="none" stroke-dasharray="2,2" />
+      <polygon points="40,40 45,50 55,50 47,56 50,66 40,60 30,66 33,56 25,50 35,50" fill="none" />
+      <polygon points="160,60 163,68 171,68 165,73 167,81 160,76 153,81 155,73 149,68 157,68" fill="none" />
+    </svg>`
+  },
+  {
+    id: 'col-3',
+    title: 'Lotus Bloom & Sun',
+    category: 'Nature',
+    classLevel: 'Class 2–6',
+    svgOutline: `<svg viewBox="0 0 200 200" class="w-full h-full stroke-slate-900 fill-white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="100" cy="45" r="20" fill="none" stroke-dasharray="4,2" />
+      <path d="M 100 80 C 85 105, 85 130, 100 150 C 115 130, 115 105, 100 80 Z" fill="none" />
+      <path d="M 90 95 C 65 115, 60 140, 85 152" fill="none" />
+      <path d="M 110 95 C 135 115, 140 140, 115 152" fill="none" />
+      <path d="M 30 160 Q 100 150 170 160 Q 100 170 30 160" fill="none" />
+      <path d="M 40 175 Q 100 165 160 175" fill="none" />
+    </svg>`
+  }
+];

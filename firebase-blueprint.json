@@ -1,0 +1,179 @@
+{
+  "entities": {
+    "StudentProfile": {
+      "title": "StudentProfile",
+      "description": "Student user profile information with enrolled class, learning points, streak, attendance, assignments, and fee details.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "parentName": { "type": "string", "maxLength": 100 },
+        "parentEmail": { "type": "string", "maxLength": 150 },
+        "mobile": { "type": "string", "maxLength": 20 },
+        "email": { "type": "string", "maxLength": 150 },
+        "classLevel": { "type": "string", "maxLength": 20 },
+        "schoolName": { "type": "string", "maxLength": 150 },
+        "parentConsent": { "type": "boolean" },
+        "points": { "type": "number" },
+        "coins": { "type": "number" },
+        "level": { "type": "number" },
+        "streakDays": { "type": "number" },
+        "lastActiveDate": { "type": "string", "maxLength": 50 },
+        "plan": { "type": "string", "enum": ["free", "basic", "premium"] },
+        "registeredAt": { "type": "string", "maxLength": 50 },
+        "avatar": { "type": "string", "maxLength": 20 },
+        "linkedParentId": { "type": "string", "maxLength": 128 },
+        "attendanceRate": { "type": "number" },
+        "feeStatus": { "type": "string", "enum": ["PAID", "PARTIAL", "DUE"] }
+      },
+      "required": ["id", "name", "email", "classLevel"]
+    },
+    "ParentProfile": {
+      "title": "ParentProfile",
+      "description": "Verified parent / guardian profile linked to authorized children only.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 150 },
+        "mobile": { "type": "string", "maxLength": 20 },
+        "isVerified": { "type": "boolean" },
+        "registeredAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "name", "email"]
+    },
+    "QuizAttempt": {
+      "title": "QuizAttempt",
+      "description": "Recorded quiz or scholarship exam attempt result.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "studentName": { "type": "string", "maxLength": 100 },
+        "classLevel": { "type": "string", "maxLength": 20 },
+        "subject": { "type": "string", "maxLength": 100 },
+        "totalQuestions": { "type": "number" },
+        "correctCount": { "type": "number" },
+        "scorePercent": { "type": "number" },
+        "timeTakenSeconds": { "type": "number" },
+        "pointsEarned": { "type": "number" },
+        "completedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "studentId", "subject", "correctCount", "totalQuestions"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily student attendance and active learning session record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["PRESENT", "ABSENT", "HOLIDAY"] },
+        "minutesLogged": { "type": "number" }
+      },
+      "required": ["id", "studentId", "date", "status"]
+    },
+    "AssignmentItem": {
+      "title": "AssignmentItem",
+      "description": "Subject homework assignment with submission tracking and marks.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 150 },
+        "subject": { "type": "string", "maxLength": 100 },
+        "dueDate": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["PENDING", "SUBMITTED", "EVALUATED"] },
+        "maxScore": { "type": "number" },
+        "obtainedScore": { "type": "number" },
+        "teacherRemarks": { "type": "string", "maxLength": 255 }
+      },
+      "required": ["id", "studentId", "title", "subject", "status"]
+    },
+    "FeeRecord": {
+      "title": "FeeRecord",
+      "description": "Tuition or membership fee invoice and receipt details.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "receiptNumber": { "type": "string", "maxLength": 50 },
+        "feeType": { "type": "string", "maxLength": 100 },
+        "totalAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "dueAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["PAID", "PARTIAL", "DUE"] },
+        "dueDate": { "type": "string", "maxLength": 50 },
+        "paidAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "studentId", "receiptNumber", "totalAmount", "status"]
+    },
+    "PaymentTransaction": {
+      "title": "PaymentTransaction",
+      "description": "Verified payment receipt record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "receiptNumber": { "type": "string", "maxLength": 50 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "studentName": { "type": "string", "maxLength": 100 },
+        "parentEmail": { "type": "string", "maxLength": 150 },
+        "planId": { "type": "string", "enum": ["basic", "premium"] },
+        "amount": { "type": "number" },
+        "paymentId": { "type": "string", "maxLength": 100 },
+        "status": { "type": "string", "enum": ["SUCCESS", "FAILED", "PENDING"] },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "receiptNumber", "studentId", "amount", "status"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "School and vacation champions announcements broadcast by admin.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 150 },
+        "content": { "type": "string", "maxLength": 500 },
+        "targetAudience": { "type": "string", "enum": ["ALL", "STUDENTS", "PARENTS"] },
+        "publishedAt": { "type": "string", "maxLength": 50 },
+        "author": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["id", "title", "content", "publishedAt"]
+    }
+  },
+  "firestore": {
+    "/students/{studentId}": {
+      "schema": { "$ref": "#/entities/StudentProfile" },
+      "description": "Collection of individual student profiles partitioned by student ID."
+    },
+    "/students/{studentId}/attempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/QuizAttempt" },
+      "description": "Subcollection of quiz attempts belonging to the student."
+    },
+    "/students/{studentId}/attendance/{attendanceId}": {
+      "schema": { "$ref": "#/entities/AttendanceRecord" },
+      "description": "Subcollection of attendance records for the student."
+    },
+    "/students/{studentId}/assignments/{assignmentId}": {
+      "schema": { "$ref": "#/entities/AssignmentItem" },
+      "description": "Subcollection of academic assignments for the student."
+    },
+    "/students/{studentId}/fees/{feeId}": {
+      "schema": { "$ref": "#/entities/FeeRecord" },
+      "description": "Subcollection of fee invoices and receipts for the student."
+    },
+    "/parents/{parentId}": {
+      "schema": { "$ref": "#/entities/ParentProfile" },
+      "description": "Collection of parent profiles with securely linked child IDs."
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/PaymentTransaction" },
+      "description": "Payment transactions ledger for memberships."
+    },
+    "/announcements/{announcementId}": {
+      "schema": { "$ref": "#/entities/Announcement" },
+      "description": "Broadcast announcements from school administrators."
+    }
+  }
+}

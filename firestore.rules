@@ -1,0 +1,182 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net: Default-deny all undefined paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened Global Helpers
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == 'ronakvarade2022@gmail.com' && request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Secure Parent-Child Link Verifier
+    function isParentOf(studentId) {
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/parents/$(request.auth.uid)) &&
+             (studentId in get(/databases/$(database)/documents/parents/$(request.auth.uid)).data.linkedStudentIds);
+    }
+
+    // StudentProfile Schema Validator
+    function isValidStudentProfile(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.email is string && data.email.size() <= 150 &&
+             data.classLevel is string && data.classLevel.size() <= 20;
+    }
+
+    // ParentProfile Schema Validator
+    function isValidParentProfile(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.email is string && data.email.size() <= 150;
+    }
+
+    // QuizAttempt Schema Validator
+    function isValidQuizAttempt(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.studentId is string && data.studentId.size() <= 128 &&
+             data.subject is string && data.subject.size() <= 100 &&
+             data.totalQuestions is number && data.totalQuestions > 0 &&
+             data.correctCount is number && data.correctCount >= 0;
+    }
+
+    // PaymentTransaction Schema Validator
+    function isValidTransaction(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.receiptNumber is string && data.receiptNumber.size() <= 50 &&
+             data.studentId is string && data.studentId.size() <= 128 &&
+             data.amount is number && data.amount > 0 &&
+             data.status in ['SUCCESS', 'FAILED', 'PENDING', 'REFUNDED'];
+    }
+
+    // Announcement Schema Validator
+    function isValidAnnouncement(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.title is string && data.title.size() <= 150 &&
+             data.content is string && data.content.size() <= 500;
+    }
+
+    // 1. Collection: /students/{studentId}
+    // Students can access ONLY their own profile. Linked parents can access only their child. Admin can access all.
+    match /students/{studentId} {
+      allow get: if isOwner(studentId) || isParentOf(studentId) || isAdmin();
+      allow list: if isAdmin() || (isSignedIn() && (resource.data.id == request.auth.uid || resource.data.linkedParentId == request.auth.uid));
+      allow create: if isAdmin() || (isOwner(studentId) && isValidStudentProfile(incoming()) && incoming().id == studentId);
+      allow update: if (isOwner(studentId) || isAdmin()) && 
+                       isValidStudentProfile(incoming()) && 
+                       incoming().id == existing().id;
+      allow delete: if isAdmin();
+
+      // Subcollection: /students/{studentId}/attempts/{attemptId} (Marks & Quiz Results)
+      match /attempts/{attemptId} {
+        allow get: if isOwner(studentId) || isParentOf(studentId) || isAdmin();
+        allow list: if isOwner(studentId) || isParentOf(studentId) || isAdmin();
+        allow create: if (isOwner(studentId) || isAdmin()) && 
+                         isValidQuizAttempt(incoming()) && 
+                         incoming().studentId == studentId;
+        allow update: if false; // Immutable exam records
+        allow delete: if isAdmin();
+      }
+
+      // Subcollection: /students/{studentId}/attendance/{attendanceId}
+      match /attendance/{attendanceId} {
+        allow get: if isOwner(studentId) || isParentOf(studentId) || isAdmin();
+        allow list: if isOwner(studentId) || isParentOf(studentId) || isAdmin();
+        allow write: if isAdmin(); // Attendance can only be recorded and managed by School/Admin
+      }
+
+      // Subcollection: /students/{studentId}/assignments/{assignmentId}
+      match /assignments/{assignmentId} {
+        allow get: if isOwner(studentId) || isParentOf(studentId) || isAdmin();
+        allow list: if isOwner(studentId) || isParentOf(studentId) || isAdmin();
+        allow create, delete: if isAdmin();
+        allow update: if isAdmin() || (isOwner(studentId) && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'submissionData', 'submittedAt']));
+      }
+
+      // Subcollection: /students/{studentId}/fees/{feeId}
+      match /fees/{feeId} {
+        allow get: if isOwner(studentId) || isParentOf(studentId) || isAdmin();
+        allow list: if isOwner(studentId) || isParentOf(studentId) || isAdmin();
+        allow write: if isAdmin(); // Fee invoices and receipts managed by School/Admin
+      }
+    }
+
+    // 2. Collection: /parents/{parentId}
+    // Parents can access only their own parent record. Admin can access all.
+    match /parents/{parentId} {
+      allow get: if isOwner(parentId) || isAdmin();
+      allow list: if isAdmin() || (isSignedIn() && resource.data.id == request.auth.uid);
+      allow create: if isAdmin() || (isOwner(parentId) && isValidParentProfile(incoming()));
+      allow update: if (isOwner(parentId) || isAdmin()) && incoming().id == existing().id;
+      allow delete: if isAdmin();
+    }
+
+    // 3. Collection: /admins/{adminId}
+    // Only authorized administrators can assign or modify admin privileges
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // 4. Collection: /announcements/{announcementId}
+    // All authenticated users can read; only admin can create/update/delete
+    match /announcements/{announcementId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() && isValidAnnouncement(incoming());
+    }
+
+    // 5. Collection: /transactions/{transactionId}
+    match /transactions/{transactionId} {
+      allow get: if isSignedIn() && (resource.data.studentId == request.auth.uid || isParentOf(resource.data.studentId) || isAdmin());
+      allow list: if isAdmin() || (isSignedIn() && (resource.data.studentId == request.auth.uid || isParentOf(resource.data.studentId)));
+      allow create: if isSignedIn() && isValidTransaction(incoming());
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // 6. Collection: /referrals/{userId}
+    match /referrals/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) || isAdmin();
+    }
+
+    // 7. Collection: /referral_transactions/{txId}
+    match /referral_transactions/{txId} {
+      allow read: if isSignedIn() && (resource.data.referrerId == request.auth.uid || resource.data.buyerStudentId == request.auth.uid || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // 8. Collection: /payout_requests/{payoutId}
+    match /payout_requests/{payoutId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+  }
+}
