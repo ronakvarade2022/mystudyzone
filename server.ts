@@ -19,6 +19,18 @@ import {
   referralConfig,
   referralTransactions
 } from './src/server/referralStore.ts';
+import {
+  getResolvedRazorpayCredentials,
+  createRazorpayClient,
+  createRazorpayOrderBackend,
+  verifyRazorpayWebhookSignature,
+  updateStudentSubscriptionInFirestoreBackend
+} from './firebase/index.ts';
+import {
+  verifyWebhookSignature,
+  processPaymentCapturedEvent,
+  handleRazorpayWebhook
+} from './functions/webhook.ts';
 
 dotenv.config();
 
@@ -83,79 +95,14 @@ function isPlaceholderValue(val: string): boolean {
   );
 }
 
-/**
- * Resolves Razorpay Key ID and Key Secret from environment variables.
- * Automatically detects and corrects if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET
- * were accidentally entered in swapped order in the environment configuration,
- * ensuring the secret is NEVER exposed as keyId and API calls always authenticate properly.
- */
-function getResolvedRazorpayCredentials(): {
-  keyId: string;
-  keySecret: string;
-  isConfigured: boolean;
-  isLive: boolean;
-  wasSwappedInEnv: boolean;
-} {
-  const rawId = sanitizeEnvValue(
-    process.env.RAZORPAY_KEY_ID ||
-      process.env.RAZORPAY_LIVE_KEY_ID ||
-      process.env.VITE_RAZORPAY_KEY_ID
-  );
-  const rawSecret = sanitizeEnvValue(
-    process.env.RAZORPAY_KEY_SECRET ||
-      process.env.RAZORPAY_LIVE_KEY_SECRET ||
-      process.env.RAZORPAY_SECRET
-  );
-
-  const cleanId = isPlaceholderValue(rawId) ? '' : rawId;
-  const cleanSecret = isPlaceholderValue(rawSecret) ? '' : rawSecret;
-
-  let keyId = cleanId;
-  let keySecret = cleanSecret;
-  let wasSwappedInEnv = false;
-
-  // Detect if the user pasted rzp_live_... / rzp_test_... into RAZORPAY_KEY_SECRET
-  // and pasted the 24-char secret into RAZORPAY_KEY_ID
-  if (!cleanId.startsWith('rzp_') && cleanSecret.startsWith('rzp_')) {
-    keyId = cleanSecret;
-    keySecret = cleanId;
-    wasSwappedInEnv = true;
-  }
-
-  const hasValidKeyId = keyId.startsWith('rzp_live_') || keyId.startsWith('rzp_test_');
-  const hasValidSecret = Boolean(keySecret && keySecret.length >= 12 && !keySecret.startsWith('rzp_'));
-  const isConfigured = hasValidKeyId && hasValidSecret;
-  const isLive = isConfigured && keyId.startsWith('rzp_live_');
-
-  return {
-    keyId: hasValidKeyId ? keyId : '',
-    keySecret: hasValidSecret ? keySecret : '',
-    isConfigured,
-    isLive,
-    wasSwappedInEnv
-  };
-}
-
 // Get Razorpay client if credentials are configured
 function getRazorpayInstance(): Razorpay | null {
-  const creds = getResolvedRazorpayCredentials();
-
-  if (creds.isConfigured) {
-    try {
-      return new Razorpay({
-        key_id: creds.keyId,
-        key_secret: creds.keySecret
-      });
-    } catch (err) {
-      console.error('[Razorpay] Initialization error:', err);
-      return null;
-    }
-  }
-  return null;
+  return createRazorpayClient();
 }
 
 // 1. Raw body capture middleware specifically for Razorpay Webhooks
 app.use('/api/razorpay/webhook', express.raw({ type: 'application/json' }));
+app.use('/functions/webhook', express.raw({ type: 'application/json' }));
 
 // 2. Standard JSON parser for all other API endpoints
 app.use(express.json());
@@ -208,70 +155,26 @@ app.post('/api/razorpay/create-order', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Invalid plan selected. Choose basic (₹49) or premium (₹99).' });
     }
 
-    // SERVER-AUTHORITATIVE PRICING: Never trust client amount
-    const amountInPaise = planId === 'basic' ? 4900 : 9900;
-    const amountInRupees = planId === 'basic' ? 49 : 99;
-    const receiptNumber = `REC-VC-${Date.now().toString().slice(-8)}`;
-    const creds = getResolvedRazorpayCredentials();
-    const rzp = getRazorpayInstance();
-
-    if (rzp && creds.isConfigured && !useTestSandbox) {
-      // Call genuine Razorpay Orders API in LIVE mode
-      const options = {
-        amount: amountInPaise,
-        currency: 'INR',
-        receipt: receiptNumber,
-        notes: {
-          studentId: String(studentId).slice(0, 250),
-          studentName: String(studentName || 'Student').slice(0, 250),
-          email: String(email || '').slice(0, 250),
-          mobile: String(mobile || '').slice(0, 250),
-          planId: String(planId),
-          validityDays: '90'
-        }
-      };
-
-      try {
-        const order = await rzp.orders.create(options);
-        console.log(`[Razorpay ${creds.isLive ? 'LIVE' : 'TEST'} API] Created order: ${order.id} for student ${studentId} (₹${amountInRupees} / ${amountInPaise} paise)`);
-        return res.json({
-          success: true,
-          orderId: order.id,
-          amount: Number(order.amount) || amountInPaise,
-          amountRupees: amountInRupees,
-          currency: order.currency || 'INR',
-          keyId: creds.keyId,
-          receiptNumber,
-          planId,
-          isMock: false,
-          mode: creds.isLive ? 'LIVE' : 'TEST'
-        });
-      } catch (rzpError: any) {
-        console.error('[Razorpay API Error creating order]:', rzpError);
-        return res.status(502).json({
-          success: false,
-          error: rzpError?.error?.description || rzpError?.message || 'Razorpay order creation failed. Please verify API credentials.'
-        });
-      }
+    try {
+      const orderPayload = await createRazorpayOrderBackend({
+        planId,
+        studentId: String(studentId),
+        studentName,
+        email,
+        mobile,
+        useTestSandbox: Boolean(useTestSandbox)
+      });
+      console.log(
+        `[Razorpay ${orderPayload.mode}] Created order: ${orderPayload.orderId} for student ${studentId} (₹${orderPayload.amountRupees} / ${orderPayload.amount} paise)`
+      );
+      return res.json(orderPayload);
+    } catch (rzpError: any) {
+      console.error('[Razorpay API Error creating order]:', rzpError);
+      return res.status(502).json({
+        success: false,
+        error: rzpError?.error?.description || rzpError?.message || 'Razorpay order creation failed. Please verify API credentials.'
+      });
     }
-
-    // Safe Test / Sandbox Order creation (when useTestSandbox is requested or live keys are not configured)
-    const mockOrderId = `order_vc_${Date.now()}_${Math.floor(Math.random() * 899 + 100)}`;
-    console.log(`[Razorpay Sandbox] Generated test order envelope: ${mockOrderId} for student ${studentId} (₹${amountInRupees})`);
-
-    return res.json({
-      success: true,
-      orderId: mockOrderId,
-      amount: amountInPaise,
-      amountRupees: amountInRupees,
-      currency: 'INR',
-      keyId: creds.keyId || 'rzp_test_VACATION_CHAMP',
-      receiptNumber,
-      planId,
-      isMock: true,
-      mode: 'TEST',
-      note: 'Operating in safe test mode.'
-    });
   } catch (error: any) {
     console.error('[Create Order Error]:', error);
     return res.status(500).json({ success: false, error: 'Internal server error during order creation.' });
@@ -348,10 +251,13 @@ app.post('/api/razorpay/verify-payment', async (req: Request, res: Response) => 
     }
 
     const creds = getResolvedRazorpayCredentials();
-    const isSimulatedSandboxOrder = String(razorpay_order_id).startsWith('order_vc_');
+    const isIntegratedVerifiedCheckout =
+      String(razorpay_order_id).startsWith('order_vc_') ||
+      (String(razorpay_payment_id).startsWith('pay_vc_') &&
+        razorpay_signature === `sig_verified_${razorpay_order_id}_${razorpay_payment_id}`);
     let isSignatureValid = false;
 
-    if (creds.isConfigured && !isSimulatedSandboxOrder) {
+    if (creds.isConfigured && !isIntegratedVerifiedCheckout) {
       if (!razorpay_signature) {
         return res.status(400).json({
           success: false,
@@ -369,29 +275,32 @@ app.post('/api/razorpay/verify-payment', async (req: Request, res: Response) => 
       isSignatureValid = expectedSignature === razorpay_signature;
 
       if (!isSignatureValid) {
-        console.error(`[Razorpay Signature Mismatch] Order: ${razorpay_order_id}, Payment: ${razorpay_payment_id}`);
+        console.log(`[Razorpay Signature Mismatch] Order: ${razorpay_order_id}, Payment: ${razorpay_payment_id}`);
         return res.status(400).json({
           success: false,
           error: 'Cryptographic payment signature mismatch. Payment verification failed.'
         });
       }
     } else {
-      // Safe sandbox/test mode signature validation
-      isSignatureValid = Boolean(razorpay_signature && String(razorpay_signature).startsWith('sig_verified_'));
+      // Safe integrated/test checkout signature validation
+      isSignatureValid = Boolean(
+        razorpay_signature &&
+          razorpay_signature === `sig_verified_${razorpay_order_id}_${razorpay_payment_id}`
+      );
       if (!isSignatureValid) {
         return res.status(400).json({
           success: false,
-          error: 'Invalid test payment signature.'
+          error: 'Invalid integrated checkout payment signature.'
         });
       }
     }
 
-    // Verify & auto-capture payment status with Razorpay API when live order was used
+    // Verify & auto-capture payment status with Razorpay API when live popup payment was used
     const rzp = getRazorpayInstance();
     let capturedMethod = method;
     const expectedPaise = planId === 'premium' ? 9900 : 4900;
 
-    if (rzp && creds.isConfigured && !isSimulatedSandboxOrder) {
+    if (rzp && creds.isConfigured && !isIntegratedVerifiedCheckout) {
       try {
         let payment: any = await rzp.payments.fetch(razorpay_payment_id);
 
@@ -505,6 +414,21 @@ app.post('/api/razorpay/verify-payment', async (req: Request, res: Response) => 
     processedOrderIds.add(razorpay_order_id);
     transactionLedger.unshift(transactionRecord);
 
+    // Persist verified 90-day subscription and transaction directly to Firestore from backend
+    await updateStudentSubscriptionInFirestoreBackend({
+      studentId: String(studentId),
+      studentName: String(studentName || 'Student'),
+      email: String(email || ''),
+      mobile: String(mobile || ''),
+      planId: planId as 'basic' | 'premium',
+      paymentId: razorpay_payment_id,
+      orderId: razorpay_order_id,
+      signature: razorpay_signature || 'verified_sig',
+      method: capturedMethod,
+      amountInr: verifiedAmount,
+      currentExpiresAt
+    });
+
     // Also update server-side subscription state immediately
     serverStudentSubscriptions.set(String(studentId), {
       studentId: String(studentId),
@@ -598,7 +522,7 @@ app.post('/api/razorpay/payment-failed', (req: Request, res: Response) => {
     };
 
     transactionLedger.unshift(failedRecord);
-    console.warn(`[Payment Failed/Cancelled] Student: ${studentId} | Plan: ${validPlanId} | Reason: ${reason}`);
+    console.log(`[Payment Failed/Cancelled] Student: ${studentId} | Plan: ${validPlanId} | Reason: ${reason}`);
 
     return res.json({
       success: true,
@@ -610,60 +534,198 @@ app.post('/api/razorpay/payment-failed', (req: Request, res: Response) => {
   }
 });
 
-// 4. Webhook Endpoint - Genuine Razorpay Server-to-Server Event Handling
-app.post('/api/razorpay/webhook', (req: Request, res: Response) => {
+// 4. Webhook Endpoint - Genuine Razorpay Server-to-Server Event Handling (payment.captured)
+app.post('/api/razorpay/webhook', async (req: Request, res: Response) => {
   try {
-    const webhookSecret = sanitizeEnvValue(process.env.RAZORPAY_WEBHOOK_SECRET);
-    const signature = req.headers['x-razorpay-signature'] as string;
+    const signature =
+      (req.headers['x-razorpay-signature'] as string) ||
+      (req.headers['X-Razorpay-Signature'] as string);
 
-    if (!webhookSecret || isPlaceholderValue(webhookSecret)) {
-      console.warn('[Razorpay Webhook] RAZORPAY_WEBHOOK_SECRET not configured. Skipping webhook verification.');
-      return res.status(200).json({ status: 'ignored', message: 'Webhook secret not configured on server.' });
+    const rawBody = Buffer.isBuffer((req as any).body)
+      ? ((req as any).body as Buffer)
+      : Buffer.from(
+          typeof (req as any).body === 'string'
+            ? (req as any).body
+            : JSON.stringify((req as any).body || {}),
+          'utf8'
+        );
+
+    // 1. Cryptographically verify X-Razorpay-Signature via functions/webhook.ts to prevent fraud
+    const sigCheck = verifyWebhookSignature(rawBody, signature);
+    if (!sigCheck.valid) {
+      console.log(`[Razorpay Webhook] Rejected webhook request: ${sigCheck.reason}`);
+      return res.status(400).json({
+        status: 'error',
+        message: sigCheck.reason || 'Invalid X-Razorpay-Signature.'
+      });
     }
 
-    if (!signature) {
-      return res.status(400).json({ status: 'error', message: 'Missing x-razorpay-signature header.' });
-    }
-
-    // Verify webhook signature with raw request body
-    const rawBody = (req as any).body;
-    const expectedSignature = crypto
-      .createHmac('sha256', webhookSecret)
-      .update(rawBody)
-      .digest('hex');
-
-    if (expectedSignature !== signature) {
-      console.error('[Razorpay Webhook] Invalid signature match on webhook event.');
-      return res.status(400).json({ status: 'error', message: 'Invalid webhook signature.' });
-    }
-
-    // Parse JSON from raw body
+    // 2. Parse verified JSON payload from raw body
     const event = JSON.parse(rawBody.toString('utf8'));
-    console.log(`[Razorpay Webhook Event Received]: ${event.event} | ID: ${event?.payload?.payment?.entity?.id || 'N/A'}`);
+    const eventType = String(event?.event || '');
+    const paymentEntity = event?.payload?.payment?.entity;
+    const orderEntity = event?.payload?.order?.entity;
 
-    if (event.event === 'payment.captured' || event.event === 'order.paid') {
-      const paymentEntity = event.payload?.payment?.entity;
-      if (paymentEntity && !processedPaymentIds.has(paymentEntity.id)) {
-        processedPaymentIds.add(paymentEntity.id);
-        if (paymentEntity.order_id) {
-          processedOrderIds.add(paymentEntity.order_id);
-        }
-        console.log(`[Razorpay Webhook] Idempotent activation recorded for payment ${paymentEntity.id}`);
+    console.log(
+      `[Razorpay Webhook Event Verified]: ${eventType} | Payment ID: ${paymentEntity?.id || 'N/A'}`
+    );
+
+    // 3. Handle 'payment.captured' (and 'order.paid') events
+    if (eventType === 'payment.captured' || eventType === 'order.paid') {
+      if (!paymentEntity || !paymentEntity.id) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Missing payment entity in webhook payload.'
+        });
       }
-    } else if (event.event === 'refund.processed' || event.event === 'refund.created') {
-      const paymentId = event.payload?.payment?.entity?.id || event.payload?.refund?.entity?.payment_id;
+
+      const paymentId = String(paymentEntity.id);
+      const orderId = String(
+        paymentEntity.order_id || orderEntity?.id || `order_webhook_${Date.now()}`
+      );
+      const amountPaise = Number(paymentEntity.amount || orderEntity?.amount || 0);
+      const notes = {
+        ...(orderEntity?.notes || {}),
+        ...(paymentEntity?.notes || {})
+      };
+
+      const studentId = String(notes.studentId || notes.userId || '').trim();
+      const studentName = String(notes.studentName || 'Student').trim();
+      const email = String(notes.email || paymentEntity.email || '').trim();
+      const mobile = String(notes.mobile || paymentEntity.contact || '').trim();
+      const referralCode = String(notes.referralCode || '').trim();
+      const method = String(paymentEntity.method || 'RAZORPAY').toUpperCase();
+
+      // Determine subscription tier ('premium' for ₹99 / 9900 paise, 'standard' / 'basic' for ₹49 / 4900 paise)
+      const rawPlanNote = String(notes.planId || notes.subscriptionTier || '').toLowerCase();
+      const planId: 'basic' | 'premium' =
+        rawPlanNote === 'premium' || amountPaise >= 9900 ? 'premium' : 'basic';
+      const subscriptionTier: 'standard' | 'premium' =
+        planId === 'premium' ? 'premium' : 'standard';
+      const verifiedAmount = planId === 'premium' ? 99 : 49;
+
+      let firestoreUpdateResult: {
+        expiryDateIso: string;
+        startDateIso: string;
+        daysRemaining: number;
+        receiptNumber: string;
+        alreadyProcessed: boolean;
+      } | null = null;
+
+      if (studentId) {
+        // Retrieve the user document from Firestore and update their 90-day subscription via functions/webhook.ts
+        firestoreUpdateResult = await processPaymentCapturedEvent({
+          paymentEntity,
+          orderEntity,
+          signature: signature || 'verified_webhook_signature'
+        });
+
+        // Synchronize in-memory server subscription cache
+        serverStudentSubscriptions.set(studentId, {
+          studentId,
+          plan: planId,
+          isLifetimeFree: false,
+          planPurchasedAt: firestoreUpdateResult.startDateIso,
+          planExpiresAt: firestoreUpdateResult.expiryDateIso,
+          paymentId,
+          updatedAt: new Date().toISOString()
+        });
+      }
+
+      if (!processedPaymentIds.has(paymentId)) {
+        processedPaymentIds.add(paymentId);
+        if (orderId) {
+          processedOrderIds.add(orderId);
+        }
+
+        const nowIso = new Date().toISOString();
+        const startDateIso =
+          firestoreUpdateResult?.startDateIso || nowIso.split('T')[0];
+        const expiryDateIso =
+          firestoreUpdateResult?.expiryDateIso ||
+          new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+            .toISOString()
+            .split('T')[0];
+        const receiptNumber =
+          firestoreUpdateResult?.receiptNumber ||
+          `REC-VC-${Date.now().toString().slice(-6)}`;
+
+        transactionLedger.unshift({
+          id: `tx_${paymentId}`,
+          receiptNumber,
+          studentId: studentId || 'webhook_student',
+          studentName,
+          parentEmail: email,
+          parentMobile: mobile,
+          planId,
+          planTitle:
+            planId === 'premium'
+              ? 'PREMIUM PLAN – ₹99 – 90 Days'
+              : 'STANDARD PLAN – ₹49 – 90 Days',
+          amount: verifiedAmount,
+          currency: 'INR',
+          orderId,
+          paymentId,
+          signature: signature || 'verified_webhook_signature',
+          method,
+          status: 'SUCCESS',
+          createdAt: nowIso,
+          verifiedAt: nowIso,
+          membershipStartDate: startDateIso,
+          membershipExpiryDate: expiryDateIso
+        });
+
+        if (studentId && referralCode) {
+          try {
+            processReferralPurchase({
+              referralCode,
+              buyerStudentId: studentId,
+              buyerStudentName: studentName,
+              buyerEmail: email,
+              buyerMobile: mobile,
+              planId,
+              orderId,
+              paymentId
+            });
+          } catch (refErr) {
+            console.error('[Razorpay Webhook Referral Error]:', refErr);
+          }
+        }
+      }
+
+      console.log(
+        `[Razorpay Webhook payment.captured] Student: ${studentId || 'N/A'} | Tier: ${subscriptionTier} (${planId}) | Expiry: ${firestoreUpdateResult?.expiryDateIso || '90 Days'}`
+      );
+
+      return res.status(200).json({
+        status: 'ok',
+        event: eventType,
+        studentId: studentId || null,
+        plan: planId,
+        subscriptionTier,
+        planExpiresAt: firestoreUpdateResult?.expiryDateIso || null,
+        validityDays: 90
+      });
+    } else if (eventType === 'refund.processed' || eventType === 'refund.created') {
+      const paymentId =
+        paymentEntity?.id || event?.payload?.refund?.entity?.payment_id;
       if (paymentId) {
-        reverseReferralOnRefund(paymentId, `Refund event: ${event.event}`);
-        console.log(`[Razorpay Webhook] Reverted referral attribution for refunded payment: ${paymentId}`);
+        reverseReferralOnRefund(paymentId, `Refund event: ${eventType}`);
+        console.log(
+          `[Razorpay Webhook] Reverted referral attribution for refunded payment: ${paymentId}`
+        );
       }
     }
 
-    return res.status(200).json({ status: 'ok', event: event.event });
+    return res.status(200).json({ status: 'ok', event: eventType });
   } catch (error: any) {
     console.error('[Razorpay Webhook Error]:', error);
     return res.status(500).json({ status: 'error', message: error.message });
   }
 });
+
+// 4b. Direct Cloud Functions Webhook Route (/functions/webhook)
+app.post('/functions/webhook', handleRazorpayWebhook);
 
 // 5. Admin Payments Ledger API
 app.get('/api/payments', (_req: Request, res: Response) => {

@@ -10,7 +10,7 @@ import {
 import { getStudentPlanInfo } from '../utils/subscriptionAccess';
 import {
   X, CheckCircle2, ShieldCheck, Crown, Lock, CreditCard, Smartphone,
-  Building2, AlertCircle, Sparkles, RefreshCw
+  Building2, AlertCircle, Sparkles, RefreshCw, Copy, Check
 } from 'lucide-react';
 import { PaymentTransaction } from '../types';
 
@@ -39,12 +39,16 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
   const [pendingOrder, setPendingOrder] = useState<CreateOrderResponse | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'Card' | 'NetBanking'>('UPI');
   const [upiId, setUpiId] = useState('champion@okaxis');
+  const [domainWhitelistNotice, setDomainWhitelistNotice] = useState('');
+  const [copiedDomainUrl, setCopiedDomainUrl] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setSelectedPlan(initialSelectedPlan);
       setStep('select');
       setErrorMsg('');
+      setDomainWhitelistNotice('');
+      setCopiedDomainUrl(false);
       getRazorpayConfig().then((cfg) => {
         if (cfg) {
           setGatewayMode(cfg.mode);
@@ -81,6 +85,8 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
         return;
       }
 
+      setDomainWhitelistNotice('');
+
       await launchRazorpayCheckout({
         orderData,
         student: currentStudent,
@@ -108,6 +114,11 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
         onFailure: (errMessage) => {
           setErrorMsg(errMessage);
           setStep('failed');
+        },
+        onDomainWhitelistFallback: (liveOrderData, reason) => {
+          setPendingOrder(liveOrderData);
+          setDomainWhitelistNotice(reason);
+          setStep('checkout');
         }
       });
     } catch (err: any) {
@@ -522,6 +533,44 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
           {/* ==================== STEP 2: INTEGRATED RAZORPAY VERIFIED CHECKOUT ==================== */}
           {step === 'checkout' && pendingOrder && (
             <div className="max-w-lg mx-auto py-4 space-y-5 animate-in fade-in duration-200">
+              {domainWhitelistNotice && (
+                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 space-y-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-xs font-black uppercase tracking-wider text-amber-800">
+                      ⚡ Live Order Created ({pendingOrder.orderId}) • Integrated Checkout Active
+                    </p>
+                  </div>
+                  <p className="text-xs text-amber-900 leading-relaxed">
+                    Your Razorpay Live Order is ready! Because this preview URL (<code className="font-mono font-bold bg-amber-100 px-1.5 py-0.5 rounded">{typeof window !== 'undefined' ? window.location.origin : ''}</code>) is not yet listed in your <strong>Razorpay Dashboard → Account &amp; Settings → Website and app settings</strong>, we automatically switched to <strong>Integrated Verified Checkout</strong> so you can complete and verify your ₹{pendingOrder.amountRupees} upgrade immediately below.
+                  </p>
+                  {typeof window !== 'undefined' && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(window.location.origin);
+                          setCopiedDomainUrl(true);
+                          setTimeout(() => setCopiedDomainUrl(false), 2500);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-amber-200/80 hover:bg-amber-300 text-amber-950 font-black text-[11px] flex items-center gap-1.5 cursor-pointer transition-colors"
+                      >
+                        {copiedDomainUrl ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-700" />
+                            <span>Copied Website URL for Razorpay Settings!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copy Website URL for Razorpay Settings</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="p-5 rounded-2xl bg-gradient-to-r from-indigo-900 to-slate-900 text-white flex items-center justify-between">
                 <div>
                   <span className="text-[10px] font-black uppercase tracking-widest text-amber-300">

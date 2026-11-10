@@ -50,20 +50,50 @@ export interface VerifyPaymentResponse {
   error?: string;
 }
 
+// Helper: Safely resolve public Razorpay Key ID (never accepts secret keys)
+export function resolveSafePublicRazorpayKeyId(serverKeyId?: string): string {
+  const candidateFromServer = (serverKeyId || '').trim();
+  if (
+    candidateFromServer.startsWith('rzp_live_') ||
+    candidateFromServer.startsWith('rzp_test_')
+  ) {
+    return candidateFromServer;
+  }
+
+  const envKey = String(
+    (import.meta as any).env?.VITE_RAZORPAY_KEY_ID || ''
+  ).trim();
+  if (envKey.startsWith('rzp_live_') || envKey.startsWith('rzp_test_')) {
+    return envKey;
+  }
+
+  return 'rzp_test_VACATION_CHAMP';
+}
+
 // 1. Fetch public Razorpay configuration from server
 export async function getRazorpayConfig(): Promise<RazorpayConfigResponse> {
   try {
     const res = await fetch('/api/razorpay/config');
     if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-    return await res.json();
+    const data = await res.json();
+    const keyId = resolveSafePublicRazorpayKeyId(data?.keyId);
+    const isLive = keyId.startsWith('rzp_live_');
+    return {
+      ...data,
+      keyId,
+      isLive,
+      mode: isLive ? 'LIVE' : 'TEST'
+    };
   } catch (error) {
-    console.warn('[Razorpay] Failed to fetch server config, using fallback:', error);
+    console.warn('[Razorpay] Failed to fetch server config, using env/fallback:', error);
+    const keyId = resolveSafePublicRazorpayKeyId();
+    const isLive = keyId.startsWith('rzp_live_');
     return {
       success: true,
-      keyId: 'rzp_test_VACATION_CHAMP',
-      isLive: false,
-      mode: 'TEST',
-      configured: false,
+      keyId,
+      isLive,
+      mode: isLive ? 'LIVE' : 'TEST',
+      configured: isLive,
       currency: 'INR'
     };
   }
@@ -95,7 +125,11 @@ export async function createRazorpayOrder(
     throw new Error(err.error || `Server order creation failed with status ${res.status}`);
   }
 
-  return await res.json();
+  const data: CreateOrderResponse = await res.json();
+  return {
+    ...data,
+    keyId: resolveSafePublicRazorpayKeyId(data.keyId)
+  };
 }
 
 // 3. Cryptographic server-side payment verification
@@ -146,11 +180,27 @@ export function loadRazorpayScript(): Promise<boolean> {
     script.async = true;
     script.onload = () => resolve(true);
     script.onerror = () => {
-      console.error('[Razorpay] Failed to load checkout.js');
+      console.log('[Razorpay] Checkout script could not be loaded');
       resolve(false);
     };
     document.body.appendChild(script);
   });
+}
+
+function cleanupRazorpayOverlay() {
+  try {
+    const containers = document.querySelectorAll('.razorpay-container');
+    containers.forEach((el) => {
+      if (el && el.parentNode) {
+        el.parentNode.removeChild(el);
+      }
+    });
+    if (document.body) {
+      document.body.style.overflow = '';
+    }
+  } catch {
+    // Ignore DOM cleanup errors
+  }
 }
 
 // 5. Open Official Razorpay Standard Checkout Modal
@@ -161,14 +211,30 @@ export async function launchRazorpayCheckout(options: {
   referralCode?: string;
   onSuccess: (verifyResult: VerifyPaymentResponse) => void;
   onFailure: (errorMessage: string) => void;
+  onDomainWhitelistFallback?: (orderData: CreateOrderResponse, reason: string) => void;
 }) {
   const isLoaded = await loadRazorpayScript();
   if (!isLoaded || typeof (window as any).Razorpay === 'undefined') {
+    if (options.onDomainWhitelistFallback) {
+      options.onDomainWhitelistFallback(
+        options.orderData,
+        'Razorpay checkout script was blocked by browser or network. Switched to Integrated Checkout.'
+      );
+      return;
+    }
     options.onFailure('Unable to load Razorpay payment gateway script. Please verify internet connection.');
     return;
   }
 
-  const { orderData, student, planId, referralCode, onSuccess, onFailure } = options;
+  const {
+    orderData,
+    student,
+    planId,
+    referralCode,
+    onSuccess,
+    onFailure,
+    onDomainWhitelistFallback
+  } = options;
   const planTitle =
     planId === 'premium'
       ? 'PREMIUM PLAN – ₹99 – 90 Days'
@@ -189,9 +255,10 @@ export async function launchRazorpayCheckout(options: {
   }
 
   let hasSettled = false;
+  const resolvedPublicKeyId = resolveSafePublicRazorpayKeyId(orderData.keyId);
 
   const rzpOptions: Record<string, any> = {
-    key: orderData.keyId,
+    key: resolvedPublicKeyId,
     amount: orderData.amount || planAmountPaise, // in paise (4900 or 9900)
     currency: orderData.currency || 'INR',
     name: 'Vacation Champions',
@@ -273,11 +340,37 @@ export async function launchRazorpayCheckout(options: {
     razorpayInstance.on('payment.failed', function (response: any) {
       if (hasSettled) return;
       hasSettled = true;
-      console.error('[Razorpay Payment Failed Callback]:', response?.error);
+
+      const reasonCode = String(response?.error?.reason || '').toLowerCase();
       const desc =
         response?.error?.description ||
         response?.error?.reason ||
         'Payment was declined by bank or UPI provider';
+      const isDomainRiskBlock =
+        reasonCode === 'payment_risk_check_failed' ||
+        String(desc).toLowerCase().includes('website does not match') ||
+        String(desc).toLowerCase().includes('registered website');
+
+      console.log('[Razorpay Payment Event]:', {
+        reason: reasonCode,
+        description: desc,
+        orderId: orderData.orderId
+      });
+
+      try {
+        if (typeof razorpayInstance.close === 'function') {
+          razorpayInstance.close();
+        }
+      } catch {
+        // Ignore modal close error
+      }
+      cleanupRazorpayOverlay();
+
+      if (isDomainRiskBlock && onDomainWhitelistFallback) {
+        onDomainWhitelistFallback(orderData, desc);
+        return;
+      }
+
       const failedPaymentId =
         response?.error?.metadata?.payment_id || `pay_failed_${Date.now()}`;
       const failedOrderId =
@@ -302,7 +395,14 @@ export async function launchRazorpayCheckout(options: {
     });
     razorpayInstance.open();
   } catch (err: any) {
-    console.error('[Razorpay Open Error]:', err);
+    console.log('[Razorpay Open Notice]:', err?.message || err);
+    if (onDomainWhitelistFallback) {
+      onDomainWhitelistFallback(
+        orderData,
+        err?.message || 'Razorpay popup could not open in this window.'
+      );
+      return;
+    }
     onFailure(`Could not open Razorpay checkout: ${err.message}`);
   }
 }
