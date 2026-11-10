@@ -1,0 +1,3 @@
+/api/*  /.netlify/functions/api/:splat  200!
+/functions/webhook  /.netlify/functions/api/webhook  200!
+/*  /index.html  200

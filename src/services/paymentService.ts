@@ -77,6 +77,49 @@ async function fetchWithTimeout(
   }
 }
 
+/**
+ * Calls the payment backend endpoint (e.g., '/razorpay/create-order').
+ * - First calls `/api${subpath}` (or `${VITE_API_BASE_URL}/api${subpath}`).
+ * - If static/CDN hosting (e.g., Netlify on mystudyzone.in) returns HTTP 404 or HTML for `/api/*`,
+ *   automatically retries the Netlify Serverless Function endpoint `/.netlify/functions/api${subpath}`.
+ */
+async function fetchPaymentApi(
+  subpath: string,
+  options: RequestInit = {},
+  timeoutMs: number = 15000
+): Promise<{ res: Response; urlUsed: string }> {
+  const envBase = String(
+    (import.meta as any).env?.VITE_API_BASE_URL || ''
+  )
+    .trim()
+    .replace(/\/+$/, '');
+
+  const primaryUrl = `${envBase}/api${subpath}`;
+  const res = await fetchWithTimeout(primaryUrl, options, timeoutMs);
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+
+  // If primary /api/... route returned 404 or a static HTML fallback page, retry /.netlify/functions/api/...
+  if (res.status === 404 || contentType.includes('text/html')) {
+    const netlifyUrl = `${envBase}/.netlify/functions/api${subpath}`;
+    console.info(
+      `[Razorpay API] ${primaryUrl} returned HTTP ${res.status} (${contentType || 'no content-type'}); retrying serverless route ${netlifyUrl}...`
+    );
+    try {
+      const fallbackRes = await fetchWithTimeout(netlifyUrl, options, timeoutMs);
+      const fallbackType = (
+        fallbackRes.headers.get('content-type') || ''
+      ).toLowerCase();
+      if (fallbackRes.status !== 404 && !fallbackType.includes('text/html')) {
+        return { res: fallbackRes, urlUsed: netlifyUrl };
+      }
+    } catch (fallbackErr) {
+      console.info('[Razorpay API] Serverless fallback error:', fallbackErr);
+    }
+  }
+
+  return { res, urlUsed: primaryUrl };
+}
+
 // Helper: Safely resolve public Razorpay Key ID (never accepts secret keys)
 export function resolveSafePublicRazorpayKeyId(serverKeyId?: string): string {
   const candidateFromServer = (serverKeyId || '').trim();
@@ -100,7 +143,7 @@ export function resolveSafePublicRazorpayKeyId(serverKeyId?: string): string {
 // 1. Fetch public Razorpay configuration from server
 export async function getRazorpayConfig(): Promise<RazorpayConfigResponse> {
   try {
-    const res = await fetchWithTimeout('/api/razorpay/config', {}, 10000);
+    const { res } = await fetchPaymentApi('/razorpay/config', {}, 10000);
     if (!res.ok) throw new Error(`HTTP error ${res.status}`);
     const data = await res.json();
     const keyId = resolveSafePublicRazorpayKeyId(data?.keyId);
@@ -143,8 +186,8 @@ export async function createRazorpayOrder(
     `[Razorpay] Creating LIVE order for plan '${planId}' (₹${planId === 'premium' ? 99 : 49} / ${planId === 'premium' ? 9900 : 4900} paise)...`
   );
 
-  const res = await fetchWithTimeout(
-    '/api/razorpay/create-order',
+  const { res, urlUsed } = await fetchPaymentApi(
+    '/razorpay/create-order',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -157,14 +200,23 @@ export async function createRazorpayOrder(
   try {
     data = await res.json();
   } catch {
+    console.info(
+      `[Razorpay] Non-JSON response from ${urlUsed} (HTTP ${res.status})`
+    );
+    if (res.status === 404) {
+      throw new Error(
+        `Payment backend endpoint (${urlUsed}) returned HTTP 404. Please ensure the latest deployment with netlify.toml and netlify/functions/api.mjs is published on mystudyzone.in.`
+      );
+    }
     throw new Error(
-      `Payment server returned an invalid response (HTTP ${res.status}). Please retry.`
+      `Payment server returned an invalid response (HTTP ${res.status}) from ${urlUsed}. Please retry.`
     );
   }
 
   if (!res.ok || !data?.success || !data?.orderId) {
     const reason =
-      data?.error || `Server order creation failed with status ${res.status}`;
+      data?.error ||
+      `Server order creation failed with status ${res.status} at ${urlUsed}`;
     console.info('[Razorpay] Order creation failed:', reason);
     throw new Error(reason);
   }
@@ -201,8 +253,8 @@ export async function verifyRazorpayPayment(payload: {
   referralCode?: string;
 }): Promise<VerifyPaymentResponse> {
   try {
-    const res = await fetchWithTimeout(
-      '/api/razorpay/verify-payment',
+    const { res } = await fetchPaymentApi(
+      '/razorpay/verify-payment',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -213,7 +265,7 @@ export async function verifyRazorpayPayment(payload: {
 
     const data = await res.json().catch(() => ({
       success: false,
-      error: 'Invalid verification response from server.'
+      error: `Invalid verification response from server (HTTP ${res.status}).`
     }));
 
     if (!res.ok || !data?.success) {
@@ -479,7 +531,7 @@ export async function launchRazorpayCheckout(options: {
         console.info(
           `[Razorpay Checkout] Dismissed by user for order ${orderData.orderId}`
         );
-        fetch('/api/razorpay/payment-failed', {
+        fetchPaymentApi('/razorpay/payment-failed', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -591,7 +643,7 @@ export async function launchRazorpayCheckout(options: {
       const failedOrderId =
         response?.error?.metadata?.order_id || orderData.orderId;
 
-      fetch('/api/razorpay/payment-failed', {
+      fetchPaymentApi('/razorpay/payment-failed', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

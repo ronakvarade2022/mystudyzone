@@ -16,6 +16,9 @@ export default defineConfig(() => {
       port: 3000,
       strictPort: true,
       allowedHosts: [
+        'mystudyzone.in',
+        'www.mystudyzone.in',
+        '.netlify.app',
         'ais-dev-alhqutb2uhqexyjuas5mhs-851623560969.asia-northeast1.run.app',
         'ais-pre-alhqutb2uhqexyjuas5mhs-851623560969.asia-northeast1.run.app',
         '.run.app',

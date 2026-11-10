@@ -250,7 +250,7 @@ export async function processPaymentCapturedEvent(params: {
   const expiryDateIso = expiryDate.toISOString().split('T')[0];
   const daysRemaining = Math.max(
     1,
-    Math.ceil((expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+    Math.round((expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
   );
   const receiptNumber = `REC-VC-${Date.now().toString().slice(-6)}`;
 

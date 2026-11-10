@@ -323,7 +323,7 @@ const SECOND_STUDENT: StudentProfile = {
   badges: ['badge-first-quiz', 'badge-accuracy-master', 'badge-streak-3', 'badge-story-worm'],
   plan: 'basic',
   planPurchasedAt: '2026-05-02',
-  planExpiresAt: '2026-06-02',
+  planExpiresAt: '2026-07-31',
   avatar: '🦄',
   attemptedQuestionIds: [],
   attemptedPuzzleIds: [],

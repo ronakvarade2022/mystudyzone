@@ -104,6 +104,23 @@ function getRazorpayInstance(): Razorpay | null {
   return createRazorpayClient();
 }
 
+// 0. CORS & Netlify Function path alias middleware so both /api/* and /.netlify/functions/api/* work seamlessly
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, X-Razorpay-Signature'
+  );
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  if (req.url.startsWith('/.netlify/functions/api')) {
+    req.url = req.url.replace(/^\/\.netlify\/functions\/api/, '/api') || '/api';
+  }
+  next();
+});
+
 // 1. Raw body capture middleware specifically for Razorpay Webhooks
 app.use('/api/razorpay/webhook', express.raw({ type: 'application/json' }));
 app.use('/functions/webhook', express.raw({ type: 'application/json' }));
@@ -357,7 +374,7 @@ app.post('/api/razorpay/verify-payment', async (req: Request, res: Response) => 
       membershipExpiryDate: expiryDateIso
     };
 
-    const daysRemaining = Math.max(0, Math.ceil((expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+    const daysRemaining = Math.max(1, Math.round((expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
 
     const membershipRecord: ServerMembership = {
       membershipId: `mem_${razorpay_payment_id}`,
@@ -1153,6 +1170,9 @@ async function startServer() {
       server: {
         middlewareMode: true,
         allowedHosts: [
+          'mystudyzone.in',
+          'www.mystudyzone.in',
+          '.netlify.app',
           'ais-dev-alhqutb2uhqexyjuas5mhs-851623560969.asia-northeast1.run.app',
           'ais-pre-alhqutb2uhqexyjuas5mhs-851623560969.asia-northeast1.run.app',
           '.run.app',
