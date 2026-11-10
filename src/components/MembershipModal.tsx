@@ -1,16 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   getRazorpayConfig,
   createRazorpayOrder,
-  verifyRazorpayPayment,
   launchRazorpayCheckout,
-  CreateOrderResponse
+  loadRazorpayScript
 } from '../services/paymentService';
 import { getStudentPlanInfo } from '../utils/subscriptionAccess';
 import {
   X, CheckCircle2, ShieldCheck, Crown, Lock, CreditCard, Smartphone,
-  Building2, AlertCircle, Sparkles, RefreshCw, Copy, Check
+  Building2, AlertCircle, Sparkles, RefreshCw, Copy, Check, Loader2
 } from 'lucide-react';
 import { PaymentTransaction } from '../types';
 
@@ -28,70 +27,116 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
   const { currentStudent, activateVerifiedMembership } = useApp();
 
   const [selectedPlan, setSelectedPlan] = useState<'basic' | 'premium'>(initialSelectedPlan);
-  const [step, setStep] = useState<'select' | 'checkout' | 'processing' | 'success' | 'failed'>('select');
+  const [step, setStep] = useState<'select' | 'processing' | 'success' | 'failed'>('select');
+  const [creatingOrderForPlan, setCreatingOrderForPlan] = useState<'basic' | 'premium' | null>(null);
   const [lastTransaction, setLastTransaction] = useState<PaymentTransaction | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [failedOrderId, setFailedOrderId] = useState('');
+  const [isDomainMismatchError, setIsDomainMismatchError] = useState(false);
+  const [copiedDomainUrl, setCopiedDomainUrl] = useState(false);
   const [expiryDateStr, setExpiryDateStr] = useState('');
   const [daysRemainingNum, setDaysRemainingNum] = useState(90);
-  const [gatewayMode, setGatewayMode] = useState<'LIVE' | 'TEST'>('TEST');
+  const [gatewayMode, setGatewayMode] = useState<'LIVE' | 'TEST'>('LIVE');
 
-  // Integrated Checkout State (for preview/test mode or direct UPI/Card/NetBanking verification)
-  const [pendingOrder, setPendingOrder] = useState<CreateOrderResponse | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'Card' | 'NetBanking'>('UPI');
-  const [upiId, setUpiId] = useState('champion@okaxis');
-  const [domainWhitelistNotice, setDomainWhitelistNotice] = useState('');
-  const [copiedDomainUrl, setCopiedDomainUrl] = useState(false);
+  // Synchronous lock to prevent duplicate rapid clicks on ₹49 or ₹99 buttons
+  const isCheckoutBusyRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (isOpen) {
       setSelectedPlan(initialSelectedPlan);
       setStep('select');
+      setCreatingOrderForPlan(null);
+      isCheckoutBusyRef.current = false;
       setErrorMsg('');
-      setDomainWhitelistNotice('');
+      setFailedOrderId('');
+      setIsDomainMismatchError(false);
       setCopiedDomainUrl(false);
-      getRazorpayConfig().then((cfg) => {
-        if (cfg) {
-          setGatewayMode(cfg.mode);
-        }
+
+      // Preload Razorpay Checkout script immediately when modal opens so button click is fast
+      loadRazorpayScript().catch((err) => {
+        console.info('[Razorpay] Preload notice:', err);
       });
+
+      getRazorpayConfig()
+        .then((cfg) => {
+          if (cfg && cfg.mode) {
+            setGatewayMode(cfg.mode);
+          }
+        })
+        .catch(() => {});
     }
   }, [isOpen, initialSelectedPlan]);
 
   if (!isOpen) return null;
 
   const planInfo = getStudentPlanInfo(currentStudent);
+  const isCreatingOrder = creatingOrderForPlan !== null;
 
-  // Step 1: Create Server Order & Launch Razorpay Checkout
+  // Create Server LIVE Order & Immediately Open Official Razorpay Checkout
   const handleInitiateCheckout = async (planOverride?: 'basic' | 'premium') => {
-    const targetPlan = planOverride || selectedPlan;
-    setSelectedPlan(targetPlan);
+    if (isCheckoutBusyRef.current) {
+      console.info('[Razorpay] Ignoring duplicate click while order/checkout is initializing.');
+      return;
+    }
 
-    if (!currentStudent) {
-      setErrorMsg('Please sign in to your student account before upgrading your plan.');
+    const targetPlan: 'basic' | 'premium' = planOverride || selectedPlan;
+    setSelectedPlan(targetPlan);
+    setErrorMsg('');
+    setFailedOrderId('');
+    setIsDomainMismatchError(false);
+
+    if (!currentStudent || !currentStudent.id) {
+      const authErr = 'Please sign in to your student account before purchasing a subscription plan.';
+      console.info('[Razorpay Checkout] Blocked:', authErr);
+      setErrorMsg(authErr);
       setStep('failed');
       return;
     }
 
-    setStep('processing');
-    setErrorMsg('');
+    isCheckoutBusyRef.current = true;
+    setCreatingOrderForPlan(targetPlan);
 
     try {
-      const orderData = await createRazorpayOrder(currentStudent, targetPlan);
+      // Ensure Razorpay script is loaded in parallel with order creation
+      const [scriptReady, orderData] = await Promise.all([
+        loadRazorpayScript(),
+        createRazorpayOrder(currentStudent, targetPlan)
+      ]);
 
-      // If running with sandbox/test keys only, open the built-in Razorpay Verified Checkout step
-      if (orderData.isMock) {
-        setPendingOrder(orderData);
-        setStep('checkout');
+      if (!scriptReady || typeof (window as any).Razorpay !== 'function') {
+        isCheckoutBusyRef.current = false;
+        setCreatingOrderForPlan(null);
+        const sdkErr =
+          'Razorpay Checkout script (checkout.razorpay.com) failed to load. Please check your internet connection or disable any ad-blocker and click Retry Payment.';
+        console.info('[Razorpay Checkout] Failed to open:', sdkErr);
+        setErrorMsg(sdkErr);
+        setFailedOrderId(orderData?.orderId || '');
+        setStep('failed');
         return;
       }
 
-      setDomainWhitelistNotice('');
+      if (orderData.mode) {
+        setGatewayMode(orderData.mode);
+      }
 
       await launchRazorpayCheckout({
         orderData,
         student: currentStudent,
         planId: targetPlan,
+        onCheckoutOpened: () => {
+          // Release button busy state once Razorpay modal is visible on screen
+          isCheckoutBusyRef.current = false;
+          setCreatingOrderForPlan(null);
+        },
+        onVerifyingStart: () => {
+          // Show server signature & capture verification screen after user completes payment
+          isCheckoutBusyRef.current = true;
+          setCreatingOrderForPlan(null);
+          setStep('processing');
+        },
         onSuccess: (verifyResult) => {
+          isCheckoutBusyRef.current = false;
+          setCreatingOrderForPlan(null);
           if (verifyResult.success && verifyResult.transaction) {
             if (!verifyResult.alreadyProcessed) {
               activateVerifiedMembership(
@@ -104,90 +149,42 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
             setDaysRemainingNum(verifyResult.membership?.daysRemaining || 90);
             setStep('success');
           } else {
-            setErrorMsg(
+            const verifyErr =
               verifyResult.error ||
-                'Payment signature verification failed. Paid plan was not activated.'
-            );
+              'Payment signature verification failed on server. Subscription was not activated.';
+            setErrorMsg(verifyErr);
+            setFailedOrderId(orderData.orderId);
             setStep('failed');
           }
         },
-        onFailure: (errMessage) => {
+        onFailure: (errMessage, metadata) => {
+          isCheckoutBusyRef.current = false;
+          setCreatingOrderForPlan(null);
           setErrorMsg(errMessage);
+          setFailedOrderId(metadata?.orderId || orderData.orderId || '');
+          setIsDomainMismatchError(Boolean(metadata?.isDomainMismatch));
           setStep('failed');
-        },
-        onDomainWhitelistFallback: (liveOrderData, reason) => {
-          setPendingOrder(liveOrderData);
-          setDomainWhitelistNotice(reason);
-          setStep('checkout');
         }
       });
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Unable to initiate Razorpay payment gateway.');
-      setStep('failed');
-    }
-  };
-
-  // Complete or Fail Payment in Integrated Verified Checkout
-  const handleCompleteIntegratedCheckout = async (simulateFailure: boolean = false) => {
-    if (!currentStudent || !pendingOrder) return;
-    setStep('processing');
-
-    if (simulateFailure) {
-      const failReason = `Payment declined by ${paymentMethod} gateway. Paid plan was NOT activated.`;
-      try {
-        await fetch('/api/razorpay/payment-failed', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            orderId: pendingOrder.orderId,
-            paymentId: `pay_failed_${Date.now()}`,
-            planId: selectedPlan,
-            studentId: currentStudent.id,
-            studentName: currentStudent.name,
-            reason: failReason
-          })
-        });
-      } catch {}
-      setErrorMsg(failReason);
-      setStep('failed');
-      return;
-    }
-
-    // Verify with backend /api/razorpay/verify-payment
-    const paymentId = `pay_vc_${Date.now().toString(36)}${Math.random().toString(36).substring(2, 5)}`;
-    const verification = await verifyRazorpayPayment({
-      razorpay_order_id: pendingOrder.orderId,
-      razorpay_payment_id: paymentId,
-      razorpay_signature: `sig_verified_${pendingOrder.orderId}_${paymentId}`,
-      planId: selectedPlan,
-      studentId: currentStudent.id,
-      studentName: currentStudent.name,
-      email: currentStudent.email,
-      mobile: currentStudent.mobile,
-      method: paymentMethod,
-      currentExpiresAt: currentStudent.planExpiresAt
-    });
-
-    if (verification.success && verification.transaction) {
-      activateVerifiedMembership(
-        verification.transaction,
-        verification.membership?.expiryDate
-      );
-      setLastTransaction(verification.transaction);
-      setExpiryDateStr(verification.membership?.expiryDate || '');
-      setDaysRemainingNum(verification.membership?.daysRemaining || 90);
-      setStep('success');
-    } else {
-      setErrorMsg(
-        verification.error || 'Payment verification failed on server. Paid plan was not activated.'
-      );
+      isCheckoutBusyRef.current = false;
+      setCreatingOrderForPlan(null);
+      const message =
+        err?.message ||
+        'Could not create Razorpay LIVE payment order. Please check your internet connection and try again.';
+      console.info('[Razorpay] Order initiation error:', message);
+      setErrorMsg(message);
       setStep('failed');
     }
   };
 
   const resetModal = () => {
+    isCheckoutBusyRef.current = false;
+    setCreatingOrderForPlan(null);
     setStep('select');
     setErrorMsg('');
+    setFailedOrderId('');
+    setIsDomainMismatchError(false);
     onClose();
   };
 
@@ -212,6 +209,7 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
             </div>
           </div>
           <button
+            type="button"
             onClick={resetModal}
             className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 transition-colors cursor-pointer"
           >
@@ -261,14 +259,22 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
                   </p>
                   <button
                     type="button"
+                    disabled={isCreatingOrder}
                     onClick={() =>
                       handleInitiateCheckout(
                         planInfo.storedPlan === 'basic' ? 'basic' : 'premium'
                       )
                     }
-                    className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-black text-xs cursor-pointer shadow-xs"
+                    className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white font-black text-xs cursor-pointer shadow-xs flex items-center gap-1.5"
                   >
-                    Renew Now (90 Days) →
+                    {isCreatingOrder ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Opening Checkout...</span>
+                      </>
+                    ) : (
+                      <span>Renew Now (90 Days) →</span>
+                    )}
                   </button>
                 </div>
               )}
@@ -278,6 +284,20 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
           {/* ==================== STEP 1: SELECT FROM 3 FLEXIBLE PLANS ==================== */}
           {step === 'select' && (
             <div className="space-y-6">
+              {/* Order Creation Loading Banner */}
+              {isCreatingOrder && (
+                <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-center gap-3 text-indigo-950 animate-in fade-in duration-150">
+                  <Loader2 className="w-5 h-5 text-indigo-600 animate-spin shrink-0" />
+                  <span className="text-xs sm:text-sm font-black">
+                    Creating Razorpay {gatewayMode} Order for{' '}
+                    {creatingOrderForPlan === 'premium'
+                      ? 'PREMIUM PLAN – ₹99 (90 Days)'
+                      : 'STANDARD PLAN – ₹49 (90 Days)'}
+                    ... Opening secure payment window...
+                  </span>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* PLAN 1: FREE PLAN – ₹0 – Lifetime */}
                 <div
@@ -343,7 +363,9 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
 
                 {/* PLAN 2: STANDARD PLAN – ₹49 – 90 Days */}
                 <div
-                  onClick={() => setSelectedPlan('basic')}
+                  onClick={() => {
+                    if (!isCreatingOrder) setSelectedPlan('basic');
+                  }}
                   className={`p-6 rounded-3xl border-2 flex flex-col justify-between transition-all cursor-pointer ${
                     selectedPlan === 'basic'
                       ? 'border-indigo-600 bg-indigo-50/40 shadow-lg'
@@ -399,23 +421,33 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
 
                   <button
                     type="button"
+                    disabled={isCreatingOrder}
                     onClick={(e) => {
                       e.stopPropagation();
                       handleInitiateCheckout('basic');
                     }}
-                    className="w-full py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs shadow-md transition-all cursor-pointer"
+                    className="w-full py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-black text-xs shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
                   >
-                    {planInfo.effectivePlan === 'basic'
-                      ? 'Extend Standard Plan (₹49 – 90 Days)'
-                      : planInfo.isPaidPlanExpired && planInfo.storedPlan === 'basic'
-                      ? 'Renew Standard Plan (₹49 – 90 Days)'
-                      : 'Upgrade to STANDARD PLAN – ₹49 – 90 Days'}
+                    {creatingOrderForPlan === 'basic' ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Creating ₹49 Order...</span>
+                      </>
+                    ) : planInfo.effectivePlan === 'basic' ? (
+                      <span>Extend Standard Plan (₹49 – 90 Days)</span>
+                    ) : planInfo.isPaidPlanExpired && planInfo.storedPlan === 'basic' ? (
+                      <span>Renew Standard Plan (₹49 – 90 Days)</span>
+                    ) : (
+                      <span>Upgrade to STANDARD PLAN – ₹49 – 90 Days</span>
+                    )}
                   </button>
                 </div>
 
                 {/* PLAN 3: PREMIUM PLAN – ₹99 – 90 Days */}
                 <div
-                  onClick={() => setSelectedPlan('premium')}
+                  onClick={() => {
+                    if (!isCreatingOrder) setSelectedPlan('premium');
+                  }}
                   className={`p-6 rounded-3xl border-2 flex flex-col justify-between relative transition-all cursor-pointer ${
                     selectedPlan === 'premium'
                       ? 'border-amber-500 bg-gradient-to-br from-amber-50/80 via-white to-orange-50/60 shadow-xl'
@@ -475,17 +507,25 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
 
                   <button
                     type="button"
+                    disabled={isCreatingOrder}
                     onClick={(e) => {
                       e.stopPropagation();
                       handleInitiateCheckout('premium');
                     }}
-                    className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-black text-xs shadow-lg transition-all cursor-pointer"
+                    className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-60 disabled:cursor-not-allowed text-slate-950 font-black text-xs shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
                   >
-                    {planInfo.effectivePlan === 'premium'
-                      ? 'Extend Premium Plan (₹99 – 90 Days)'
-                      : planInfo.isPaidPlanExpired && planInfo.storedPlan === 'premium'
-                      ? 'Renew Premium Plan (₹99 – 90 Days)'
-                      : 'Upgrade to PREMIUM PLAN – ₹99 – 90 Days'}
+                    {creatingOrderForPlan === 'premium' ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Creating ₹99 Order...</span>
+                      </>
+                    ) : planInfo.effectivePlan === 'premium' ? (
+                      <span>Extend Premium Plan (₹99 – 90 Days)</span>
+                    ) : planInfo.isPaidPlanExpired && planInfo.storedPlan === 'premium' ? (
+                      <span>Renew Premium Plan (₹99 – 90 Days)</span>
+                    ) : (
+                      <span>Upgrade to PREMIUM PLAN – ₹99 – 90 Days</span>
+                    )}
                   </button>
                 </div>
               </div>
@@ -504,13 +544,25 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
                 </div>
                 <button
                   type="button"
+                  disabled={isCreatingOrder}
                   onClick={() => handleInitiateCheckout(selectedPlan)}
-                  className="w-full sm:w-auto px-7 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-slate-950 font-black text-sm shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0"
+                  className="w-full sm:w-auto px-7 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 disabled:opacity-60 disabled:cursor-not-allowed text-slate-950 font-black text-sm shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0"
                 >
-                  <ShieldCheck className="w-5 h-5" />
-                  <span>
-                    Pay Now – ₹{selectedPlan === 'premium' ? '99' : '49'} (90 Days)
-                  </span>
+                  {isCreatingOrder ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>
+                        Opening Razorpay (₹{creatingOrderForPlan === 'premium' ? '99' : '49'})...
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-5 h-5" />
+                      <span>
+                        Pay Now – ₹{selectedPlan === 'premium' ? '99' : '49'} (90 Days)
+                      </span>
+                    </>
+                  )}
                 </button>
               </div>
 
@@ -530,148 +582,20 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
             </div>
           )}
 
-          {/* ==================== STEP 2: INTEGRATED RAZORPAY VERIFIED CHECKOUT ==================== */}
-          {step === 'checkout' && pendingOrder && (
-            <div className="max-w-lg mx-auto py-4 space-y-5 animate-in fade-in duration-200">
-              {domainWhitelistNotice && (
-                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 space-y-2.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-xs font-black uppercase tracking-wider text-amber-800">
-                      ⚡ Live Order Created ({pendingOrder.orderId}) • Integrated Checkout Active
-                    </p>
-                  </div>
-                  <p className="text-xs text-amber-900 leading-relaxed">
-                    Your Razorpay Live Order is ready! Because this preview URL (<code className="font-mono font-bold bg-amber-100 px-1.5 py-0.5 rounded">{typeof window !== 'undefined' ? window.location.origin : ''}</code>) is not yet listed in your <strong>Razorpay Dashboard → Account &amp; Settings → Website and app settings</strong>, we automatically switched to <strong>Integrated Verified Checkout</strong> so you can complete and verify your ₹{pendingOrder.amountRupees} upgrade immediately below.
-                  </p>
-                  {typeof window !== 'undefined' && (
-                    <div className="flex items-center gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard?.writeText(window.location.origin);
-                          setCopiedDomainUrl(true);
-                          setTimeout(() => setCopiedDomainUrl(false), 2500);
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-amber-200/80 hover:bg-amber-300 text-amber-950 font-black text-[11px] flex items-center gap-1.5 cursor-pointer transition-colors"
-                      >
-                        {copiedDomainUrl ? (
-                          <>
-                            <Check className="w-3.5 h-3.5 text-emerald-700" />
-                            <span>Copied Website URL for Razorpay Settings!</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3.5 h-3.5" />
-                            <span>Copy Website URL for Razorpay Settings</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="p-5 rounded-2xl bg-gradient-to-r from-indigo-900 to-slate-900 text-white flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-300">
-                    RAZORPAY SECURE CHECKOUT • ORDER #{pendingOrder.orderId.slice(-8)}
-                  </span>
-                  <h3 className="text-lg font-black mt-0.5">
-                    {selectedPlan === 'premium' ? 'Premium Plan (Full Unlock)' : 'Standard Plan (14 Subjects + Stories + Drawing)'}
-                  </h3>
-                  <p className="text-xs text-indigo-200">3 Months (90 Days) Verified Access • Student: {currentStudent?.name}</p>
-                </div>
-                <div className="text-right">
-                  <div className="text-3xl font-black text-amber-400">₹{pendingOrder.amountRupees}</div>
-                  <div className="text-[10px] text-emerald-300 font-bold">Incl. GST</div>
-                </div>
-              </div>
-
-              {/* Payment Method Tabs */}
-              <div>
-                <label className="block text-xs font-black uppercase tracking-wider text-slate-600 mb-2">
-                  Select Payment Method
-                </label>
-                <div className="grid grid-cols-3 gap-2.5">
-                  {(['UPI', 'Card', 'NetBanking'] as const).map(method => (
-                    <button
-                      key={method}
-                      type="button"
-                      onClick={() => setPaymentMethod(method)}
-                      className={`p-3 rounded-xl border-2 font-black text-xs flex flex-col items-center gap-1.5 cursor-pointer transition-all ${
-                        paymentMethod === method
-                          ? 'border-indigo-600 bg-indigo-50 text-indigo-900'
-                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                      }`}
-                    >
-                      {method === 'UPI' && <Smartphone className="w-5 h-5 text-indigo-600" />}
-                      {method === 'Card' && <CreditCard className="w-5 h-5 text-indigo-600" />}
-                      {method === 'NetBanking' && <Building2 className="w-5 h-5 text-indigo-600" />}
-                      <span>{method === 'UPI' ? 'UPI / QR' : method === 'Card' ? 'Debit / Credit Card' : 'NetBanking'}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {paymentMethod === 'UPI' && (
-                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Enter UPI ID (Google Pay / PhonePe / Paytm / BHIM)
-                  </label>
-                  <input
-                    type="text"
-                    value={upiId}
-                    onChange={e => setUpiId(e.target.value)}
-                    placeholder="yourname@okaxis"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-bold bg-white"
-                  />
-                </div>
-              )}
-
-              <div className="space-y-2.5 pt-2">
-                <button
-                  type="button"
-                  onClick={() => handleCompleteIntegratedCheckout(false)}
-                  className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <ShieldCheck className="w-5 h-5" />
-                  Pay ₹{pendingOrder.amountRupees} & Verify Subscription Now
-                </button>
-
-                <div className="grid grid-cols-2 gap-2.5 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => handleCompleteIntegratedCheckout(true)}
-                    className="py-2.5 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs cursor-pointer"
-                  >
-                    Simulate Payment Failure
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStep('select')}
-                    className="py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
-                  >
-                    ← Back to Plans
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ==================== STEP 3: PROCESSING ==================== */}
+          {/* ==================== STEP 2: PROCESSING (SERVER SIGNATURE & CAPTURE VERIFICATION) ==================== */}
           {step === 'processing' && (
             <div className="py-12 text-center space-y-4">
               <div className="w-16 h-16 rounded-full border-4 border-indigo-200 border-t-indigo-600 animate-spin mx-auto" />
               <h3 className="text-lg font-display font-bold text-slate-900">
-                Verifying Payment with Server & Firebase...
+                Verifying Payment Signature & Activating 90-Day Subscription...
               </h3>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                Verifying order signature for ₹{selectedPlan === 'premium' ? '99' : '49'} plan. Please do not close this window.
+                Confirming cryptographic payment signature and capture status with Razorpay & Firebase for your ₹{selectedPlan === 'premium' ? '99' : '49'} plan. Please do not close this window.
               </p>
             </div>
           )}
 
-          {/* ==================== STEP 4: SUCCESS ==================== */}
+          {/* ==================== STEP 3: SUCCESS ==================== */}
           {step === 'success' && lastTransaction && (
             <div className="py-6 text-center space-y-6">
               <div className="w-16 h-16 rounded-3xl bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-inner">
@@ -685,7 +609,7 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
                   Welcome to {lastTransaction.planTitle}! 👑
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Your dashboard has been automatically refreshed and your new features are now unlocked!
+                  Your dashboard has been automatically refreshed and your new features are now unlocked for 90 Days!
                 </p>
               </div>
 
@@ -709,7 +633,7 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
                 <div className="flex justify-between">
                   <span className="text-slate-400">Activated Plan:</span>
                   <span className="font-bold text-indigo-700">
-                    {lastTransaction.planId === 'premium' ? 'Premium Plan (₹99)' : 'Standard Plan (₹49)'}
+                    {lastTransaction.planId === 'premium' ? 'Premium Plan (₹99 – 90 Days)' : 'Standard Plan (₹49 – 90 Days)'}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -719,12 +643,13 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
                 <div className="flex justify-between">
                   <span className="text-slate-400">Valid Until:</span>
                   <span className="font-bold text-slate-800">
-                    {expiryDateStr || '3 Months (90 Days)'} ({daysRemainingNum} Days Remaining)
+                    {expiryDateStr || '90 Days'} ({daysRemainingNum} Days Remaining)
                   </span>
                 </div>
               </div>
 
               <button
+                type="button"
                 onClick={resetModal}
                 className="w-full max-w-md py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm transition-all cursor-pointer shadow-md"
               >
@@ -733,7 +658,7 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
             </div>
           )}
 
-          {/* ==================== STEP 5: FAILED ==================== */}
+          {/* ==================== STEP 4: FAILED / CANCELLED ==================== */}
           {step === 'failed' && (
             <div className="py-6 text-center space-y-5">
               <div className="w-16 h-16 rounded-3xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
@@ -746,22 +671,81 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
                 <h3 className="text-xl font-display font-extrabold text-slate-900 mt-2">
                   Subscription Upgrade Was Not Activated
                 </h3>
-                <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                  {errorMsg || 'Your payment could not be verified. Paid plans are only activated after verified payment.'}
+                <p className="text-xs text-slate-600 mt-1.5 max-w-md mx-auto leading-relaxed font-medium">
+                  {errorMsg || 'Your payment could not be completed or verified. Paid plans are only activated after a verified payment.'}
                 </p>
+                {failedOrderId && (
+                  <p className="text-[11px] font-mono text-slate-400 mt-1">
+                    Order Ref: {failedOrderId}
+                  </p>
+                )}
               </div>
+
+              {isDomainMismatchError && typeof window !== 'undefined' && (
+                <div className="max-w-lg mx-auto p-4 rounded-2xl bg-amber-50 border border-amber-300 text-left space-y-2.5">
+                  <p className="text-xs font-black uppercase tracking-wider text-amber-900">
+                    ⚠️ Razorpay Live Website Whitelist Required
+                  </p>
+                  <p className="text-xs text-amber-900 leading-relaxed">
+                    Razorpay Live Mode blocked this domain because{' '}
+                    <code className="font-mono font-bold bg-amber-100 px-1.5 py-0.5 rounded">
+                      {window.location.origin}
+                    </code>{' '}
+                    is not yet added under your{' '}
+                    <strong>Razorpay Dashboard → Account &amp; Settings → Website and app settings</strong>.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(window.location.origin);
+                      setCopiedDomainUrl(true);
+                      setTimeout(() => setCopiedDomainUrl(false), 2500);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-amber-200/80 hover:bg-amber-300 text-amber-950 font-black text-[11px] flex items-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    {copiedDomainUrl ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Copied Website URL ({window.location.origin})</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy Website URL for Razorpay Settings</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
 
               <div className="flex flex-wrap gap-3 max-w-md mx-auto">
                 <button
                   type="button"
-                  onClick={() => handleInitiateCheckout(selectedPlan)}
-                  className="flex-1 py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  disabled={isCreatingOrder}
+                  onClick={() => {
+                    setStep('select');
+                    handleInitiateCheckout(selectedPlan);
+                  }}
+                  className="flex-1 py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
                 >
-                  <RefreshCw className="w-4 h-4" /> Retry Payment (₹{selectedPlan === 'premium' ? '99' : '49'})
+                  {isCreatingOrder ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Opening...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      <span>Retry Payment (₹{selectedPlan === 'premium' ? '99' : '49'})</span>
+                    </>
+                  )}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setStep('select')}
+                  onClick={() => {
+                    setErrorMsg('');
+                    setStep('select');
+                  }}
                   className="py-3 px-4 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-xs transition-all cursor-pointer"
                 >
                   Change Plan

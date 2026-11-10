@@ -172,31 +172,24 @@ export async function verifyAndConfirmCapturedPayment(params: {
   const cleanPaymentId = String(paymentId || '').trim();
   const cleanOrderId = String(orderId || '').trim();
 
-  // Handle integrated verified checkout / sandbox payment IDs (pay_vc_...)
-  if (
-    cleanPaymentId.startsWith('pay_vc_') ||
-    cleanOrderId.startsWith('order_vc_')
-  ) {
-    const resolvedPlan: 'basic' | 'premium' =
-      expectedPlanId === 'basic' ? 'basic' : 'premium';
-    const amountPaise = resolvedPlan === 'premium' ? 9900 : 4900;
-    const amountRupees = resolvedPlan === 'premium' ? 99 : 49;
-
+  if (!cleanPaymentId) {
     return {
-      confirmed: true,
-      status: 'captured',
-      captured: true,
-      paymentId: cleanPaymentId,
+      confirmed: false,
+      status: 'missing_payment_id',
+      captured: false,
+      paymentId: '',
       orderId: cleanOrderId,
-      amountPaise,
-      amountRupees,
+      amountPaise: 0,
+      amountRupees: 0,
       currency: 'INR',
-      planId: resolvedPlan,
-      subscriptionTier: resolvedPlan === 'premium' ? 'premium' : 'standard',
-      method: String(fallbackMethod || 'UPI').toUpperCase(),
+      planId: expectedPlanId || 'premium',
+      subscriptionTier:
+        (expectedPlanId || 'premium') === 'premium' ? 'premium' : 'standard',
+      method: String(fallbackMethod || 'RAZORPAY').toUpperCase(),
       email: '',
       mobile: '',
-      notes: {}
+      notes: {},
+      error: 'Missing Razorpay payment ID.'
     };
   }
 

@@ -116,14 +116,27 @@ export function getStudentPlanInfo(student: StudentProfile | null | undefined): 
     };
   }
 
-  // Paid plan ('basic' or 'premium'): verify if expired (end of expiry day)
+  // Paid plan ('basic' or 'premium'): verify if expired (end of expiry day in local time)
   const now = new Date();
   let expiry: Date | null = null;
   if (student.planExpiresAt) {
-    const parsed = new Date(student.planExpiresAt);
-    if (!isNaN(parsed.getTime())) {
-      parsed.setHours(23, 59, 59, 999);
-      expiry = parsed;
+    const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(student.planExpiresAt.trim());
+    if (isoMatch) {
+      expiry = new Date(
+        Number(isoMatch[1]),
+        Number(isoMatch[2]) - 1,
+        Number(isoMatch[3]),
+        23,
+        59,
+        59,
+        999
+      );
+    } else {
+      const parsed = new Date(student.planExpiresAt);
+      if (!isNaN(parsed.getTime())) {
+        parsed.setHours(23, 59, 59, 999);
+        expiry = parsed;
+      }
     }
   }
   const isExpired = expiry ? expiry.getTime() < now.getTime() : false;
@@ -152,8 +165,20 @@ export function getStudentPlanInfo(student: StudentProfile | null | undefined): 
     };
   }
 
+  const todayEnd = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    23,
+    59,
+    59,
+    999
+  );
   const daysRemaining = expiry
-    ? Math.max(1, Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+    ? Math.max(
+        1,
+        Math.round((expiry.getTime() - todayEnd.getTime()) / (1000 * 60 * 60 * 24))
+      )
     : 90;
 
   if (student.plan === 'premium') {

@@ -165,8 +165,7 @@ app.post('/api/razorpay/create-order', async (req: Request, res: Response) => {
         studentId: String(studentId),
         studentName,
         email,
-        mobile,
-        useTestSandbox: Boolean(useTestSandbox)
+        mobile
       });
       console.log(
         `[Razorpay ${orderPayload.mode}] Created order: ${orderPayload.orderId} for student ${studentId} (₹${orderPayload.amountRupees} / ${orderPayload.amount} paise)`
@@ -255,73 +254,62 @@ app.post('/api/razorpay/verify-payment', async (req: Request, res: Response) => 
     }
 
     const creds = getResolvedRazorpayCredentials();
-    const isIntegratedVerifiedCheckout =
-      String(razorpay_order_id).startsWith('order_vc_') ||
-      (String(razorpay_payment_id).startsWith('pay_vc_') &&
-        razorpay_signature === `sig_verified_${razorpay_order_id}_${razorpay_payment_id}`);
-    let isSignatureValid = false;
+    if (!creds.isConfigured || !creds.keySecret) {
+      return res.status(500).json({
+        success: false,
+        error: 'Razorpay LIVE API credentials are not configured on the server.'
+      });
+    }
 
-    if (creds.isConfigured && !isIntegratedVerifiedCheckout) {
-      if (!razorpay_signature) {
-        return res.status(400).json({
-          success: false,
-          error: 'Missing Razorpay cryptographic payment signature.'
-        });
-      }
+    if (!razorpay_signature) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing Razorpay cryptographic payment signature.'
+      });
+    }
 
-      // Genuine Razorpay HMAC SHA256 Signature Verification:
-      // generated_signature = hmac_sha256(order_id + "|" + payment_id, secret)
-      const expectedSignature = crypto
-        .createHmac('sha256', creds.keySecret)
-        .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-        .digest('hex');
+    // Genuine Razorpay HMAC SHA256 Signature Verification:
+    // generated_signature = hmac_sha256(order_id + "|" + payment_id, secret)
+    const expectedSignature = crypto
+      .createHmac('sha256', creds.keySecret)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
 
-      isSignatureValid = expectedSignature === razorpay_signature;
+    const expectedBuf = Buffer.from(expectedSignature, 'utf8');
+    const providedBuf = Buffer.from(String(razorpay_signature).trim(), 'utf8');
+    const isSignatureValid =
+      expectedBuf.length === providedBuf.length &&
+      crypto.timingSafeEqual(expectedBuf, providedBuf);
 
-      if (!isSignatureValid) {
-        console.log(`[Razorpay Signature Mismatch] Order: ${razorpay_order_id}, Payment: ${razorpay_payment_id}`);
-        return res.status(400).json({
-          success: false,
-          error: 'Cryptographic payment signature mismatch. Payment verification failed.'
-        });
-      }
-    } else {
-      // Safe integrated/test checkout signature validation
-      isSignatureValid = Boolean(
-        razorpay_signature &&
-          razorpay_signature === `sig_verified_${razorpay_order_id}_${razorpay_payment_id}`
-      );
-      if (!isSignatureValid) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid integrated checkout payment signature.'
-        });
-      }
+    if (!isSignatureValid) {
+      console.log(`[Razorpay Signature Mismatch] Order: ${razorpay_order_id}, Payment: ${razorpay_payment_id}`);
+      return res.status(400).json({
+        success: false,
+        error: 'Cryptographic payment signature mismatch. Payment verification failed.'
+      });
     }
 
     // Fetch & confirm payment capture status directly via Razorpay API using server-side RAZORPAY_KEY_SECRET
     let capturedMethod = method;
-    if (creds.isConfigured && !isIntegratedVerifiedCheckout) {
-      const captureStatus = await verifyAndConfirmCapturedPayment({
-        paymentId: razorpay_payment_id,
-        orderId: razorpay_order_id,
-        expectedPlanId: planId as 'basic' | 'premium',
-        fallbackMethod: method,
-        autoCaptureIfAuthorized: true
+    const captureStatus = await verifyAndConfirmCapturedPayment({
+      paymentId: razorpay_payment_id,
+      orderId: razorpay_order_id,
+      expectedPlanId: planId as 'basic' | 'premium',
+      fallbackMethod: method,
+      autoCaptureIfAuthorized: true
+    });
+
+    if (!captureStatus.confirmed) {
+      return res.status(400).json({
+        success: false,
+        error:
+          captureStatus.error ||
+          `Payment ${razorpay_payment_id} was not confirmed as captured by Razorpay API. Subscription was not activated.`
       });
+    }
 
-      if (!captureStatus.confirmed) {
-        return res.status(400).json({
-          success: false,
-          error:
-            captureStatus.error ||
-            `Payment ${razorpay_payment_id} was not confirmed as captured by Razorpay API. Subscription was not activated.`
-        });
-      }
-
-      if (captureStatus.method) {
-        capturedMethod = captureStatus.method;
-      }
+    if (captureStatus.method) {
+      capturedMethod = captureStatus.method;
     }
 
     // Calculate 3-month (90-day) membership with renewal policy
@@ -1161,7 +1149,6 @@ async function startServer() {
   const httpServer = http.createServer(app);
 
   if (!isProduction) {
-    const disableHmr = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
@@ -1172,19 +1159,14 @@ async function startServer() {
           'localhost',
           '127.0.0.1'
         ],
-        hmr: disableHmr
-          ? false
-          : {
-              server: httpServer,
-              clientPort: process.env.HMR_CLIENT_PORT
-                ? Number(process.env.HMR_CLIENT_PORT)
-                : 443
-            }
+        hmr: false,
+        ws: false,
+        watch: null
       },
       appType: 'spa'
     });
     app.use(vite.middlewares);
-    console.log('[Dev Mode] Vite middlewares mounted to Express.');
+    console.log('[Dev Mode] Vite middlewares mounted to Express (HMR WebSocket disabled).');
   } else {
     const distPath = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));

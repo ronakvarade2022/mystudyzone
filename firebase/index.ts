@@ -108,8 +108,9 @@ export function createRazorpayClient(): Razorpay | null {
 }
 
 /**
- * Cloud Function / Backend Handler: Create a Razorpay Order for ₹49 (Standard - 90 Days) or ₹99 (Premium - 90 Days).
+ * Cloud Function / Backend Handler: Create a Razorpay LIVE Order for ₹49 (Standard - 90 Days) or ₹99 (Premium - 90 Days).
  * Enforces server-authoritative pricing in paise (4900 or 9900) and returns only the public Key ID.
+ * Never creates dummy or simulated orders.
  */
 export async function createRazorpayOrderBackend(params: {
   planId: 'basic' | 'premium';
@@ -117,10 +118,8 @@ export async function createRazorpayOrderBackend(params: {
   studentName?: string;
   email?: string;
   mobile?: string;
-  useTestSandbox?: boolean;
 }) {
-  const { planId, studentId, studentName, email, mobile, useTestSandbox } =
-    params;
+  const { planId, studentId, studentName, email, mobile } = params;
 
   if (!studentId) {
     throw new Error('Student authentication required.');
@@ -137,53 +136,62 @@ export async function createRazorpayOrderBackend(params: {
   const creds = getResolvedRazorpayCredentials();
   const rzp = createRazorpayClient();
 
-  if (rzp && creds.isConfigured && !useTestSandbox) {
-    const order = await rzp.orders.create({
-      amount: amountInPaise,
-      currency: 'INR',
-      receipt: receiptNumber,
-      notes: {
-        studentId: String(studentId).slice(0, 250),
-        studentName: String(studentName || 'Student').slice(0, 250),
-        email: String(email || '').slice(0, 250),
-        mobile: String(mobile || '').slice(0, 250),
-        planId: String(planId),
-        subscriptionTier: planId === 'premium' ? 'premium' : 'standard',
-        validityDays: '90'
-      }
-    });
-
-    return {
-      success: true,
-      orderId: order.id,
-      amount: Number(order.amount) || amountInPaise,
-      amountRupees: amountInRupees,
-      currency: order.currency || 'INR',
-      keyId: creds.keyId,
-      receiptNumber,
-      planId,
-      isMock: false,
-      mode: (creds.isLive ? 'LIVE' : 'TEST') as 'LIVE' | 'TEST'
-    };
+  if (!rzp || !creds.isConfigured) {
+    throw new Error(
+      'Razorpay LIVE API Key ID and Key Secret are not configured on the server.'
+    );
   }
 
-  const mockOrderId = `order_vc_${Date.now()}_${Math.floor(Math.random() * 899 + 100)}`;
+  // Enforce a 15-second timeout when contacting Razorpay Orders API
+  const orderPromise = rzp.orders.create({
+    amount: amountInPaise,
+    currency: 'INR',
+    receipt: receiptNumber,
+    notes: {
+      studentId: String(studentId).slice(0, 250),
+      studentName: String(studentName || 'Student').slice(0, 250),
+      email: String(email || '').slice(0, 250),
+      mobile: String(mobile || '').slice(0, 250),
+      planId: String(planId),
+      subscriptionTier: planId === 'premium' ? 'premium' : 'standard',
+      validityDays: '90'
+    }
+  });
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(
+      () =>
+        reject(
+          new Error(
+            'Razorpay order creation timed out after 15 seconds. Please check your network and try again.'
+          )
+        ),
+      15000
+    );
+  });
+
+  const order = await Promise.race([orderPromise, timeoutPromise]);
+
+  if (!order || !order.id) {
+    throw new Error('Razorpay API did not return a valid order ID.');
+  }
+
   return {
     success: true,
-    orderId: mockOrderId,
-    amount: amountInPaise,
+    orderId: order.id,
+    amount: Number(order.amount) || amountInPaise,
     amountRupees: amountInRupees,
-    currency: 'INR',
-    keyId: creds.keyId || 'rzp_test_VACATION_CHAMP',
+    currency: order.currency || 'INR',
+    keyId: creds.keyId,
     receiptNumber,
     planId,
-    isMock: true,
-    mode: 'TEST' as const
+    isMock: false,
+    mode: (creds.isLive ? 'LIVE' : 'TEST') as 'LIVE' | 'TEST'
   };
 }
 
 /**
- * Cloud Function / Backend Helper: Verify Razorpay HMAC-SHA256 Payment Signature.
+ * Cloud Function / Backend Helper: Verify genuine Razorpay HMAC-SHA256 Payment Signature.
  */
 export function verifyRazorpaySignatureBackend(params: {
   razorpay_order_id: string;
@@ -193,26 +201,23 @@ export function verifyRazorpaySignatureBackend(params: {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = params;
   const creds = getResolvedRazorpayCredentials();
 
-  const isIntegratedVerifiedCheckout =
-    String(razorpay_order_id).startsWith('order_vc_') ||
-    (String(razorpay_payment_id).startsWith('pay_vc_') &&
-      razorpay_signature ===
-        `sig_verified_${razorpay_order_id}_${razorpay_payment_id}`);
-
-  if (creds.isConfigured && !isIntegratedVerifiedCheckout) {
-    if (!razorpay_signature) return false;
-    const expectedSignature = crypto
-      .createHmac('sha256', creds.keySecret)
-      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-      .digest('hex');
-    return expectedSignature === razorpay_signature;
+  if (!creds.isConfigured || !creds.keySecret || !razorpay_signature) {
+    return false;
   }
 
-  return Boolean(
-    razorpay_signature &&
-      razorpay_signature ===
-        `sig_verified_${razorpay_order_id}_${razorpay_payment_id}`
-  );
+  const expectedSignature = crypto
+    .createHmac('sha256', creds.keySecret)
+    .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+    .digest('hex');
+
+  const expectedBuf = Buffer.from(expectedSignature, 'utf8');
+  const providedBuf = Buffer.from(String(razorpay_signature).trim(), 'utf8');
+
+  if (expectedBuf.length !== providedBuf.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(expectedBuf, providedBuf);
 }
 
 /**

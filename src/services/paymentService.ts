@@ -50,6 +50,33 @@ export interface VerifyPaymentResponse {
   error?: string;
 }
 
+// Helper: Fetch with explicit timeout so network stalls never cause Unhandled Promise Rejections
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = 15000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new Error(
+        'Request to payment server timed out after 15 seconds. Please check your internet connection and try again.'
+      );
+    }
+    throw new Error(
+      err?.message || 'Network error while communicating with payment server.'
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Helper: Safely resolve public Razorpay Key ID (never accepts secret keys)
 export function resolveSafePublicRazorpayKeyId(serverKeyId?: string): string {
   const candidateFromServer = (serverKeyId || '').trim();
@@ -67,13 +94,13 @@ export function resolveSafePublicRazorpayKeyId(serverKeyId?: string): string {
     return envKey;
   }
 
-  return 'rzp_test_VACATION_CHAMP';
+  return '';
 }
 
 // 1. Fetch public Razorpay configuration from server
 export async function getRazorpayConfig(): Promise<RazorpayConfigResponse> {
   try {
-    const res = await fetch('/api/razorpay/config');
+    const res = await fetchWithTimeout('/api/razorpay/config', {}, 10000);
     if (!res.ok) throw new Error(`HTTP error ${res.status}`);
     const data = await res.json();
     const keyId = resolveSafePublicRazorpayKeyId(data?.keyId);
@@ -85,50 +112,77 @@ export async function getRazorpayConfig(): Promise<RazorpayConfigResponse> {
       mode: isLive ? 'LIVE' : 'TEST'
     };
   } catch (error) {
-    console.warn('[Razorpay] Failed to fetch server config, using env/fallback:', error);
+    console.info('[Razorpay] Config check notice:', error);
     const keyId = resolveSafePublicRazorpayKeyId();
     const isLive = keyId.startsWith('rzp_live_');
     return {
-      success: true,
+      success: Boolean(keyId),
       keyId,
       isLive,
       mode: isLive ? 'LIVE' : 'TEST',
-      configured: isLive,
+      configured: Boolean(keyId),
       currency: 'INR'
     };
   }
 }
 
-// 2. Request backend order creation (enforces server-side ₹49 / 4900 paise & ₹99 / 9900 paise pricing)
+// 2. Request backend LIVE order creation (enforces server-side ₹49 / 4900 paise & ₹99 / 9900 paise pricing)
 export async function createRazorpayOrder(
   student: StudentProfile,
-  planId: 'basic' | 'premium',
-  options?: { useTestSandbox?: boolean }
+  planId: 'basic' | 'premium'
 ): Promise<CreateOrderResponse> {
   const payload = {
     planId,
     studentId: student.id,
     studentName: student.name,
     email: student.email,
-    mobile: student.mobile,
-    useTestSandbox: Boolean(options?.useTestSandbox)
+    mobile: student.mobile
   };
 
-  const res = await fetch('/api/razorpay/create-order', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+  console.info(
+    `[Razorpay] Creating LIVE order for plan '${planId}' (₹${planId === 'premium' ? 99 : 49} / ${planId === 'premium' ? 9900 : 4900} paise)...`
+  );
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Order creation failed' }));
-    throw new Error(err.error || `Server order creation failed with status ${res.status}`);
+  const res = await fetchWithTimeout(
+    '/api/razorpay/create-order',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    },
+    15000
+  );
+
+  let data: any = null;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(
+      `Payment server returned an invalid response (HTTP ${res.status}). Please retry.`
+    );
   }
 
-  const data: CreateOrderResponse = await res.json();
+  if (!res.ok || !data?.success || !data?.orderId) {
+    const reason =
+      data?.error || `Server order creation failed with status ${res.status}`;
+    console.info('[Razorpay] Order creation failed:', reason);
+    throw new Error(reason);
+  }
+
+  const resolvedKeyId = resolveSafePublicRazorpayKeyId(data.keyId);
+  if (!resolvedKeyId) {
+    throw new Error(
+      'Razorpay public Key ID (rzp_live_...) was not returned by the server.'
+    );
+  }
+
+  console.info(
+    `[Razorpay] LIVE order created successfully: ${data.orderId} (${data.amount} paise)`
+  );
+
   return {
     ...data,
-    keyId: resolveSafePublicRazorpayKeyId(data.keyId)
+    keyId: resolvedKeyId
   };
 }
 
@@ -146,60 +200,170 @@ export async function verifyRazorpayPayment(payload: {
   currentExpiresAt?: string;
   referralCode?: string;
 }): Promise<VerifyPaymentResponse> {
-  const res = await fetch('/api/razorpay/verify-payment', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+  try {
+    const res = await fetchWithTimeout(
+      '/api/razorpay/verify-payment',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      },
+      15000
+    );
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Verification failed' }));
+    const data = await res.json().catch(() => ({
+      success: false,
+      error: 'Invalid verification response from server.'
+    }));
+
+    if (!res.ok || !data?.success) {
+      return {
+        success: false,
+        error: data?.error || 'Server rejected payment signature verification.'
+      };
+    }
+
+    return data;
+  } catch (err: any) {
     return {
       success: false,
-      error: err.error || 'Server rejected payment verification.'
+      error:
+        err?.message ||
+        'Network error while verifying payment with server. If amount was debited, your plan will be activated automatically via webhook.'
     };
   }
-
-  return await res.json();
 }
 
-// 4. Load Razorpay Standard Checkout Script Dynamically if not yet ready
+// 4. Singleton Razorpay Checkout Script Loader (loads once, never hangs)
+let razorpayScriptLoadPromise: Promise<boolean> | null = null;
+
 export function loadRazorpayScript(): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (typeof window !== 'undefined' && (window as any).Razorpay) {
+  if (
+    typeof window !== 'undefined' &&
+    typeof (window as any).Razorpay === 'function'
+  ) {
+    return Promise.resolve(true);
+  }
+
+  if (razorpayScriptLoadPromise) {
+    return razorpayScriptLoadPromise;
+  }
+
+  razorpayScriptLoadPromise = new Promise<boolean>((resolve) => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      razorpayScriptLoadPromise = null;
+      return resolve(false);
+    }
+
+    if (typeof (window as any).Razorpay === 'function') {
       return resolve(true);
     }
-    const existingScript = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+
+    let settled = false;
+    const finish = (ok: boolean, reason?: string) => {
+      if (settled) return;
+      settled = true;
+      if (!ok) {
+        console.info(
+          '[Razorpay] Checkout script load failed:',
+          reason || 'unknown'
+        );
+        razorpayScriptLoadPromise = null;
+      }
+      resolve(ok);
+    };
+
+    const injectFreshScript = () => {
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.async = true;
+      const timer = setTimeout(() => {
+        finish(
+          typeof (window as any).Razorpay === 'function',
+          'Timed out loading https://checkout.razorpay.com/v1/checkout.js'
+        );
+      }, 8000);
+
+      script.onload = () => {
+        clearTimeout(timer);
+        finish(
+          typeof (window as any).Razorpay === 'function',
+          'Script loaded but window.Razorpay is undefined'
+        );
+      };
+      script.onerror = () => {
+        clearTimeout(timer);
+        finish(false, 'Network error loading checkout.razorpay.com');
+      };
+      document.head.appendChild(script);
+    };
+
+    const existingScript = document.querySelector(
+      'script[src^="https://checkout.razorpay.com/v1/checkout.js"]'
+    ) as HTMLScriptElement | null;
+
     if (existingScript) {
-      existingScript.addEventListener('load', () => resolve(true));
-      existingScript.addEventListener('error', () => resolve(false));
+      // Poll briefly in case the script in index.html is still finishing execution
+      let elapsed = 0;
+      const pollInterval = setInterval(() => {
+        elapsed += 100;
+        if (typeof (window as any).Razorpay === 'function') {
+          clearInterval(pollInterval);
+          finish(true);
+        } else if (elapsed >= 2500) {
+          clearInterval(pollInterval);
+          // Existing script tag did not expose window.Razorpay; inject a fresh one
+          injectFreshScript();
+        }
+      }, 100);
+
+      existingScript.addEventListener(
+        'load',
+        () => {
+          if (typeof (window as any).Razorpay === 'function') {
+            clearInterval(pollInterval);
+            finish(true);
+          }
+        },
+        { once: true }
+      );
+      existingScript.addEventListener(
+        'error',
+        () => {
+          clearInterval(pollInterval);
+          injectFreshScript();
+        },
+        { once: true }
+      );
       return;
     }
-    const script = document.createElement('script');
-    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-    script.async = true;
-    script.onload = () => resolve(true);
-    script.onerror = () => {
-      console.log('[Razorpay] Checkout script could not be loaded');
-      resolve(false);
-    };
-    document.body.appendChild(script);
+
+    injectFreshScript();
   });
+
+  return razorpayScriptLoadPromise;
 }
 
-function cleanupRazorpayOverlay() {
-  try {
-    const containers = document.querySelectorAll('.razorpay-container');
-    containers.forEach((el) => {
-      if (el && el.parentNode) {
-        el.parentNode.removeChild(el);
+// Active Razorpay checkout instance reference (never remove .razorpay-container from DOM!)
+let activeRazorpayInstance: any = null;
+
+function closeExistingRazorpayInstance() {
+  if (activeRazorpayInstance) {
+    try {
+      if (typeof activeRazorpayInstance.close === 'function') {
+        activeRazorpayInstance.close();
       }
-    });
-    if (document.body) {
+    } catch {
+      // Ignore close error on stale instance
+    }
+    activeRazorpayInstance = null;
+  }
+  try {
+    if (typeof document !== 'undefined' && document.body) {
       document.body.style.overflow = '';
     }
   } catch {
-    // Ignore DOM cleanup errors
+    // Ignore style reset error
   }
 }
 
@@ -209,32 +373,50 @@ export async function launchRazorpayCheckout(options: {
   student: StudentProfile;
   planId: 'basic' | 'premium';
   referralCode?: string;
+  onCheckoutOpened?: () => void;
+  onVerifyingStart?: () => void;
   onSuccess: (verifyResult: VerifyPaymentResponse) => void;
-  onFailure: (errorMessage: string) => void;
-  onDomainWhitelistFallback?: (orderData: CreateOrderResponse, reason: string) => void;
-}) {
-  const isLoaded = await loadRazorpayScript();
-  if (!isLoaded || typeof (window as any).Razorpay === 'undefined') {
-    if (options.onDomainWhitelistFallback) {
-      options.onDomainWhitelistFallback(
-        options.orderData,
-        'Razorpay checkout script was blocked by browser or network. Switched to Integrated Checkout.'
-      );
-      return;
-    }
-    options.onFailure('Unable to load Razorpay payment gateway script. Please verify internet connection.');
-    return;
-  }
-
+  onFailure: (errorMessage: string, metadata?: { isDomainMismatch?: boolean; reasonCode?: string; orderId?: string }) => void;
+}): Promise<void> {
   const {
     orderData,
     student,
     planId,
     referralCode,
+    onCheckoutOpened,
+    onVerifyingStart,
     onSuccess,
-    onFailure,
-    onDomainWhitelistFallback
+    onFailure
   } = options;
+
+  const isLoaded = await loadRazorpayScript();
+  const RazorpayConstructor =
+    typeof window !== 'undefined' ? (window as any).Razorpay : undefined;
+
+  if (!isLoaded || typeof RazorpayConstructor !== 'function') {
+    const msg =
+      'Razorpay Checkout SDK (checkout.razorpay.com) could not be loaded. Please check your internet connection or ad-blocker settings and try again.';
+    console.info('[Razorpay Checkout] Failed to open:', msg);
+    onFailure(msg, { reasonCode: 'script_load_failed', orderId: orderData.orderId });
+    return;
+  }
+
+  const resolvedPublicKeyId = resolveSafePublicRazorpayKeyId(orderData.keyId);
+  if (!resolvedPublicKeyId) {
+    const msg =
+      'Missing valid Razorpay LIVE Key ID. Cannot initialize checkout.';
+    console.info('[Razorpay Checkout] Failed to open:', msg);
+    onFailure(msg, { reasonCode: 'missing_key_id', orderId: orderData.orderId });
+    return;
+  }
+
+  if (!orderData.orderId || !String(orderData.orderId).startsWith('order_')) {
+    const msg = `Invalid Razorpay Order ID (${orderData.orderId || 'empty'}). Please retry payment.`;
+    console.info('[Razorpay Checkout] Failed to open:', msg);
+    onFailure(msg, { reasonCode: 'invalid_order_id', orderId: orderData.orderId });
+    return;
+  }
+
   const planTitle =
     planId === 'premium'
       ? 'PREMIUM PLAN – ₹99 – 90 Days'
@@ -247,19 +429,24 @@ export async function launchRazorpayCheckout(options: {
   if (student.name && student.name.trim()) {
     prefill.name = student.name.trim();
   }
-  if (student.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(student.email.trim())) {
+  if (
+    student.email &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(student.email.trim())
+  ) {
     prefill.email = student.email.trim();
   }
   if (cleanDigits.length === 10) {
     prefill.contact = `+91${cleanDigits}`;
   }
 
+  // Ensure any previous Razorpay modal instance is cleanly closed before creating a new one
+  closeExistingRazorpayInstance();
+
   let hasSettled = false;
-  const resolvedPublicKeyId = resolveSafePublicRazorpayKeyId(orderData.keyId);
 
   const rzpOptions: Record<string, any> = {
     key: resolvedPublicKeyId,
-    amount: orderData.amount || planAmountPaise, // in paise (4900 or 9900)
+    amount: Number(orderData.amount) || planAmountPaise, // in paise (4900 or 9900)
     currency: orderData.currency || 'INR',
     name: 'Vacation Champions',
     description: `${planTitle} • ${student.name}`,
@@ -270,6 +457,7 @@ export async function launchRazorpayCheckout(options: {
       studentName: String(student.name),
       classLevel: String(student.classLevel),
       planId: String(planId),
+      subscriptionTier: planId === 'premium' ? 'premium' : 'standard',
       validityDays: '90',
       referralCode: referralCode || ''
     },
@@ -281,10 +469,16 @@ export async function launchRazorpayCheckout(options: {
       color: '#ea580c'
     },
     modal: {
+      confirm_close: false,
+      escape: true,
+      backdropclose: false,
       ondismiss: function () {
+        activeRazorpayInstance = null;
         if (hasSettled) return;
         hasSettled = true;
-        console.log('[Razorpay Modal] User closed checkout without completing payment.');
+        console.info(
+          `[Razorpay Checkout] Dismissed by user for order ${orderData.orderId}`
+        );
         fetch('/api/razorpay/payment-failed', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -296,10 +490,13 @@ export async function launchRazorpayCheckout(options: {
             studentName: student.name,
             email: student.email,
             mobile: student.mobile,
-            reason: 'Payment cancelled by user before completion'
+            reason: 'Payment window closed by user before completing payment'
           })
         }).catch(() => {});
-        onFailure('Payment was cancelled before completion. Your subscription was not charged or activated. You can retry anytime.');
+        onFailure(
+          'Payment was cancelled before completion. Your account was not charged and the paid plan was not activated. You can click Retry Payment anytime.',
+          { reasonCode: 'user_cancelled', orderId: orderData.orderId }
+        );
       }
     },
     handler: async function (response: {
@@ -307,9 +504,18 @@ export async function launchRazorpayCheckout(options: {
       razorpay_order_id: string;
       razorpay_signature: string;
     }) {
+      activeRazorpayInstance = null;
       if (hasSettled) return;
       hasSettled = true;
-      console.log('[Razorpay Handler Received]', response);
+      console.info('[Razorpay Checkout] Payment completed, verifying signature on backend:', {
+        orderId: response.razorpay_order_id || orderData.orderId,
+        paymentId: response.razorpay_payment_id
+      });
+
+      if (onVerifyingStart) {
+        onVerifyingStart();
+      }
+
       try {
         const verifyRes = await verifyRazorpayPayment({
           razorpay_order_id: response.razorpay_order_id || orderData.orderId,
@@ -327,49 +533,58 @@ export async function launchRazorpayCheckout(options: {
         if (verifyRes.success) {
           onSuccess(verifyRes);
         } else {
-          onFailure(verifyRes.error || 'Payment signature could not be verified by server.');
+          const reason =
+            verifyRes.error ||
+            'Payment signature could not be verified by server.';
+          console.info('[Razorpay Checkout] Backend verification rejected:', reason);
+          onFailure(reason, {
+            reasonCode: 'verification_failed',
+            orderId: orderData.orderId
+          });
         }
       } catch (err: any) {
-        onFailure(err.message || 'Error occurred while contacting verification server.');
+        const reason =
+          err?.message ||
+          'Error occurred while contacting payment verification server.';
+        console.info('[Razorpay Checkout] Verification exception:', reason);
+        onFailure(reason, {
+          reasonCode: 'verification_exception',
+          orderId: orderData.orderId
+        });
       }
     }
   };
 
   try {
-    const razorpayInstance = new (window as any).Razorpay(rzpOptions);
+    console.info(
+      `[Razorpay Checkout] Opening Razorpay LIVE modal for Order ${orderData.orderId} (₹${planId === 'premium' ? 99 : 49} / ${planAmountPaise} paise)`
+    );
+    const razorpayInstance = new RazorpayConstructor(rzpOptions);
+    activeRazorpayInstance = razorpayInstance;
+
     razorpayInstance.on('payment.failed', function (response: any) {
       if (hasSettled) return;
       hasSettled = true;
 
-      const reasonCode = String(response?.error?.reason || '').toLowerCase();
+      const reasonCode = String(response?.error?.reason || 'payment_failed').toLowerCase();
       const desc =
         response?.error?.description ||
         response?.error?.reason ||
         'Payment was declined by bank or UPI provider';
-      const isDomainRiskBlock =
+      const isDomainMismatch =
         reasonCode === 'payment_risk_check_failed' ||
         String(desc).toLowerCase().includes('website does not match') ||
         String(desc).toLowerCase().includes('registered website');
 
-      console.log('[Razorpay Payment Event]:', {
+      console.info('[Razorpay Checkout] payment.failed event:', {
+        code: response?.error?.code,
         reason: reasonCode,
         description: desc,
+        step: response?.error?.step,
         orderId: orderData.orderId
       });
 
-      try {
-        if (typeof razorpayInstance.close === 'function') {
-          razorpayInstance.close();
-        }
-      } catch {
-        // Ignore modal close error
-      }
-      cleanupRazorpayOverlay();
-
-      if (isDomainRiskBlock && onDomainWhitelistFallback) {
-        onDomainWhitelistFallback(orderData, desc);
-        return;
-      }
+      closeExistingRazorpayInstance();
 
       const failedPaymentId =
         response?.error?.metadata?.payment_id || `pay_failed_${Date.now()}`;
@@ -391,19 +606,29 @@ export async function launchRazorpayCheckout(options: {
         })
       }).catch(() => {});
 
-      onFailure(`Payment Failed: ${desc}. Subscription was not activated. Please retry payment.`);
-    });
-    razorpayInstance.open();
-  } catch (err: any) {
-    console.log('[Razorpay Open Notice]:', err?.message || err);
-    if (onDomainWhitelistFallback) {
-      onDomainWhitelistFallback(
-        orderData,
-        err?.message || 'Razorpay popup could not open in this window.'
+      onFailure(
+        `Payment Failed: ${desc}. Subscription was not activated.`,
+        {
+          isDomainMismatch,
+          reasonCode,
+          orderId: failedOrderId
+        }
       );
-      return;
+    });
+
+    razorpayInstance.open();
+    if (onCheckoutOpened) {
+      onCheckoutOpened();
     }
-    onFailure(`Could not open Razorpay checkout: ${err.message}`);
+  } catch (err: any) {
+    activeRazorpayInstance = null;
+    const reason =
+      err?.message || 'Razorpay Checkout window failed to initialize.';
+    console.info('[Razorpay Checkout] Exception calling razorpayInstance.open():', reason);
+    onFailure(`Could not open Razorpay Checkout: ${reason}`, {
+      reasonCode: 'open_exception',
+      orderId: orderData.orderId
+    });
   }
 }
 
@@ -436,7 +661,10 @@ export const paymentGateway = {
         parentEmail: student.email,
         parentMobile: student.mobile,
         planId,
-        planTitle: planId === 'basic' ? 'Champion Basic (₹49)' : 'Champion Premium (₹99)',
+        planTitle:
+          planId === 'basic'
+            ? 'STANDARD PLAN – ₹49 – 90 Days'
+            : 'PREMIUM PLAN – ₹99 – 90 Days',
         amount,
         currency: 'INR',
         orderId,
@@ -461,7 +689,10 @@ export const paymentGateway = {
       parentEmail: student.email,
       parentMobile: student.mobile,
       planId,
-      planTitle: planId === 'basic' ? 'Champion Basic (₹49)' : 'Champion Premium (₹99)',
+      planTitle:
+        planId === 'basic'
+          ? 'STANDARD PLAN – ₹49 – 90 Days'
+          : 'PREMIUM PLAN – ₹99 – 90 Days',
       amount,
       currency: 'INR',
       orderId,
@@ -471,7 +702,11 @@ export const paymentGateway = {
       status: 'SUCCESS',
       createdAt: new Date().toISOString(),
       membershipStartDate: new Date().toISOString().split('T')[0],
-      membershipExpiryDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      membershipExpiryDate: new Date(
+        Date.now() + 90 * 24 * 60 * 60 * 1000
+      )
+        .toISOString()
+        .split('T')[0]
     };
 
     return {

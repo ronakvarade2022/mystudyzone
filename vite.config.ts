@@ -22,17 +22,10 @@ export default defineConfig(() => {
         'localhost',
         '127.0.0.1',
       ],
-      // Respect DISABLE_HMR in AI Studio; when active over HTTPS proxy, use clientPort 443 to avoid 3000/443 WebSocket mismatch
-      hmr:
-        process.env.DISABLE_HMR === 'true'
-          ? false
-          : {
-              clientPort: process.env.HMR_CLIENT_PORT
-                ? Number(process.env.HMR_CLIENT_PORT)
-                : 443,
-            },
-      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // Disable HMR WebSocket in preview/container environment so payment checkout is never affected by WebSocket disconnects
+      hmr: false,
+      ws: false as const,
+      watch: null,
     },
   };
 });
