@@ -31,6 +31,10 @@ import {
   processPaymentCapturedEvent,
   handleRazorpayWebhook
 } from './functions/webhook.ts';
+import {
+  fetchRazorpayPaymentById,
+  verifyAndConfirmCapturedPayment
+} from './src/server/razorpayPaymentStatusService.ts';
 
 dotenv.config();
 
@@ -295,53 +299,28 @@ app.post('/api/razorpay/verify-payment', async (req: Request, res: Response) => 
       }
     }
 
-    // Verify & auto-capture payment status with Razorpay API when live popup payment was used
-    const rzp = getRazorpayInstance();
+    // Fetch & confirm payment capture status directly via Razorpay API using server-side RAZORPAY_KEY_SECRET
     let capturedMethod = method;
-    const expectedPaise = planId === 'premium' ? 9900 : 4900;
+    if (creds.isConfigured && !isIntegratedVerifiedCheckout) {
+      const captureStatus = await verifyAndConfirmCapturedPayment({
+        paymentId: razorpay_payment_id,
+        orderId: razorpay_order_id,
+        expectedPlanId: planId as 'basic' | 'premium',
+        fallbackMethod: method,
+        autoCaptureIfAuthorized: true
+      });
 
-    if (rzp && creds.isConfigured && !isIntegratedVerifiedCheckout) {
-      try {
-        let payment: any = await rzp.payments.fetch(razorpay_payment_id);
+      if (!captureStatus.confirmed) {
+        return res.status(400).json({
+          success: false,
+          error:
+            captureStatus.error ||
+            `Payment ${razorpay_payment_id} was not confirmed as captured by Razorpay API. Subscription was not activated.`
+        });
+      }
 
-        // If payment is in 'authorized' state, capture it immediately so it settles and never auto-refunds
-        if (payment.status === 'authorized') {
-          try {
-            payment = await rzp.payments.capture(razorpay_payment_id, expectedPaise, 'INR');
-            console.log(`[Razorpay LIVE] Auto-captured authorized payment: ${razorpay_payment_id}`);
-          } catch (captureErr: any) {
-            console.warn('[Razorpay] Auto-capture notice (may already be captured):', captureErr?.message || captureErr);
-          }
-        }
-
-        if (payment.status === 'failed' || payment.status === 'refunded') {
-          return res.status(400).json({
-            success: false,
-            error: `Payment was not successful (status: ${payment.status}). Subscription was not activated.`
-          });
-        }
-
-        if (payment.amount && Number(payment.amount) !== expectedPaise) {
-          return res.status(400).json({
-            success: false,
-            error: `Payment amount mismatch: Expected ₹${expectedPaise / 100}, received ₹${Number(payment.amount) / 100}.`
-          });
-        }
-
-        if (payment.currency && payment.currency !== 'INR') {
-          return res.status(400).json({
-            success: false,
-            error: `Invalid currency: ${payment.currency}. Expected INR.`
-          });
-        }
-
-        if (payment.method) {
-          capturedMethod = String(payment.method).toUpperCase();
-        }
-      } catch (err: any) {
-        // Since HMAC-SHA256 signature with the secret key already succeeded above,
-        // log transient fetch errors without rejecting a cryptographically verified payment.
-        console.warn('[Razorpay Payment Fetch Warning after valid HMAC signature]:', err?.message || err);
+      if (captureStatus.method) {
+        capturedMethod = captureStatus.method;
       }
     }
 
@@ -726,6 +705,56 @@ app.post('/api/razorpay/webhook', async (req: Request, res: Response) => {
 
 // 4b. Direct Cloud Functions Webhook Route (/functions/webhook)
 app.post('/functions/webhook', handleRazorpayWebhook);
+
+// 4c. Fetch & Confirm Razorpay Payment Capture Status via Server-Side RAZORPAY_KEY_SECRET
+app.get('/api/razorpay/payment-status/:paymentId', async (req: Request, res: Response) => {
+  try {
+    const paymentId = String(req.params.paymentId || '').trim();
+    const orderId = req.query.orderId ? String(req.query.orderId) : undefined;
+    const planId =
+      req.query.planId === 'basic' || req.query.planId === 'premium'
+        ? (req.query.planId as 'basic' | 'premium')
+        : undefined;
+
+    if (!paymentId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Payment ID is required.'
+      });
+    }
+
+    const statusResult = await verifyAndConfirmCapturedPayment({
+      paymentId,
+      orderId,
+      expectedPlanId: planId,
+      autoCaptureIfAuthorized: true
+    });
+
+    if (!paymentId.startsWith('pay_vc_')) {
+      try {
+        const rawPayment = await fetchRazorpayPaymentById(paymentId);
+        return res.json({
+          success: statusResult.confirmed,
+          ...statusResult,
+          razorpayStatus: rawPayment.status
+        });
+      } catch {
+        // Return statusResult directly if raw fetch encountered an error
+      }
+    }
+
+    return res.json({
+      success: statusResult.confirmed,
+      ...statusResult
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      confirmed: false,
+      error: error?.message || 'Unable to fetch payment status from Razorpay API.'
+    });
+  }
+});
 
 // 5. Admin Payments Ledger API
 app.get('/api/payments', (_req: Request, res: Response) => {
@@ -1132,15 +1161,30 @@ async function startServer() {
   const httpServer = http.createServer(app);
 
   if (!isProduction) {
+    const disableHmr = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
-      server: { 
+      server: {
         middlewareMode: true,
-        hmr: { server: httpServer }
+        allowedHosts: [
+          'ais-dev-alhqutb2uhqexyjuas5mhs-851623560969.asia-northeast1.run.app',
+          'ais-pre-alhqutb2uhqexyjuas5mhs-851623560969.asia-northeast1.run.app',
+          '.run.app',
+          'localhost',
+          '127.0.0.1'
+        ],
+        hmr: disableHmr
+          ? false
+          : {
+              server: httpServer,
+              clientPort: process.env.HMR_CLIENT_PORT
+                ? Number(process.env.HMR_CLIENT_PORT)
+                : 443
+            }
       },
       appType: 'spa'
     });
     app.use(vite.middlewares);
-    console.log('[Dev Mode] Vite middlewares mounted to Express with HMR attached to HTTP server.');
+    console.log('[Dev Mode] Vite middlewares mounted to Express.');
   } else {
     const distPath = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));

@@ -1,13 +1,18 @@
 import crypto from 'crypto';
+import fs from 'fs';
 import type { Request, Response } from 'express';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
 import {
   getResolvedRazorpayCredentials,
   sanitizeEnvValue,
   isPlaceholderValue
 } from '../firebase/index.ts';
+import { verifyAndConfirmCapturedPayment } from '../src/server/razorpayPaymentStatusService.ts';
+
+const firebaseConfig = JSON.parse(
+  fs.readFileSync(new URL('../firebase-applet-config.json', import.meta.url), 'utf8')
+);
 
 // Initialize Firebase & Firestore connection to the project's provisioned database
 const firebaseApp =
@@ -146,7 +151,36 @@ export async function processPaymentCapturedEvent(params: {
       ? 'PREMIUM PLAN – ₹99 – 90 Days'
       : 'STANDARD PLAN – ₹49 – 90 Days';
   const amountInr = planId === 'premium' ? 99 : 49;
-  const method = String(paymentEntity?.method || 'RAZORPAY').toUpperCase();
+  let method = String(paymentEntity?.method || 'RAZORPAY').toUpperCase();
+
+  // Confirm live payment capture status with Razorpay API using RAZORPAY_KEY_SECRET
+  const creds = getResolvedRazorpayCredentials();
+  if (creds.isConfigured && !paymentId.startsWith('pay_vc_')) {
+    const apiCaptureCheck = await verifyAndConfirmCapturedPayment({
+      paymentId,
+      orderId: paymentEntity?.order_id || orderEntity?.id || '',
+      expectedPlanId: planId,
+      fallbackMethod: method,
+      autoCaptureIfAuthorized: true
+    });
+    if (!apiCaptureCheck.confirmed) {
+      throw new Error(
+        apiCaptureCheck.error ||
+          `Payment ${paymentId} is not confirmed as captured in Razorpay API.`
+      );
+    }
+    if (apiCaptureCheck.method) {
+      method = apiCaptureCheck.method;
+    }
+  } else if (
+    paymentEntity?.status &&
+    paymentEntity.status !== 'captured' &&
+    paymentEntity.status !== 'authorized'
+  ) {
+    throw new Error(
+      `Webhook payment status '${paymentEntity.status}' is not captured. Subscription was not activated.`
+    );
+  }
 
   // 1. Retrieve existing user document from Firestore (/students/{studentId})
   const studentRef = doc(firestoreDb, 'students', studentId);

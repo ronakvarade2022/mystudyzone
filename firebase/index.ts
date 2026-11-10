@@ -1,8 +1,12 @@
 import crypto from 'crypto';
+import fs from 'fs';
 import Razorpay from 'razorpay';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+
+const firebaseConfig = JSON.parse(
+  fs.readFileSync(new URL('../firebase-applet-config.json', import.meta.url), 'utf8')
+);
 
 // Initialize Firebase & Firestore for backend / webhook operations
 const firebaseServerApp =
