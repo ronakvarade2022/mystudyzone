@@ -52,6 +52,12 @@ export const FloatingAiChatbot: React.FC<FloatingAiChatbotProps> = ({ onNavigate
     }
   }, [messages, isOpen]);
 
+  useEffect(() => {
+    const handleOpenAiChat = () => setIsOpen(true);
+    window.addEventListener('open-ai-chat', handleOpenAiChat);
+    return () => window.removeEventListener('open-ai-chat', handleOpenAiChat);
+  }, []);
+
   const quickPrompts = {
     en: [
       'What are the ₹49 and ₹99 plans?',
@@ -151,25 +157,26 @@ export const FloatingAiChatbot: React.FC<FloatingAiChatbotProps> = ({ onNavigate
 
   return (
     <>
-      {/* Floating Trigger Button on Bottom-Right */}
-      <div className="fixed bottom-5 right-5 z-40 flex items-center gap-2">
+      {/* Floating Trigger Button Positioned Upward for High Visibility on Mobile & Desktop */}
+      <div className="fixed bottom-20 sm:bottom-16 right-4 sm:right-6 z-50 flex items-center gap-2">
         {!isOpen && (
           <button
             type="button"
             onClick={() => setIsOpen(true)}
-            className="group flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-amber-500 hover:from-purple-700 hover:to-amber-600 text-white rounded-full shadow-xl hover:shadow-2xl hover:scale-105 transition-all duration-200 cursor-pointer border-2 border-white/80"
+            className="group flex items-center gap-2.5 px-4 py-2.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-amber-500 hover:from-purple-700 hover:to-amber-600 text-white rounded-full shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer border-2 border-white ring-4 ring-purple-500/20"
             aria-label="Open AI Help Assistant"
           >
-            <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center animate-pulse">
-              <Bot className="w-4 h-4 text-white" />
+            <div className="w-8 h-8 rounded-full bg-white/25 flex items-center justify-center animate-pulse shrink-0">
+              <Bot className="w-5 h-5 text-white" />
             </div>
-            <div className="text-left hidden sm:block">
-              <div className="text-xs font-black tracking-wide flex items-center gap-1">
-                <span>AI Help Assistant</span>
-                <Sparkles className="w-3 h-3 text-amber-300" />
+            <div className="text-left pr-1">
+              <div className="text-xs sm:text-sm font-black tracking-wide flex items-center gap-1 leading-tight">
+                <span>AI Help</span>
+                <span className="hidden sm:inline">Assistant</span>
+                <Sparkles className="w-3.5 h-3.5 text-amber-200 shrink-0" />
               </div>
-              <div className="text-[10px] text-purple-100 font-medium">
-                Free • EN / हिंदी / मराठी
+              <div className="text-[10px] text-purple-100 font-bold leading-tight">
+                Free • EN / हिं / म
               </div>
             </div>
           </button>
@@ -178,7 +185,7 @@ export const FloatingAiChatbot: React.FC<FloatingAiChatbotProps> = ({ onNavigate
 
       {/* Expandable Chat Window */}
       {isOpen && (
-        <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 w-[94vw] sm:w-[400px] h-[560px] max-h-[85vh] bg-white rounded-3xl shadow-2xl border-2 border-purple-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed bottom-20 sm:bottom-16 right-3 sm:right-6 z-50 w-[94vw] sm:w-[400px] h-[520px] sm:h-[560px] max-h-[78vh] bg-white rounded-3xl shadow-2xl border-2 border-purple-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
           {/* Header */}
           <div className="bg-gradient-to-r from-purple-700 via-indigo-600 to-amber-600 text-white p-3.5 flex items-center justify-between shrink-0 shadow-md">
             <div className="flex items-center gap-2.5">
