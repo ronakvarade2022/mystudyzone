@@ -19,12 +19,15 @@ import {
   FileText,
   Sparkles, 
   LogOut,
-  ArrowRight
+  ArrowRight,
+  Crown,
+  RefreshCw
 } from 'lucide-react';
 import { LogoutConfirmModal } from './LogoutConfirmModal';
+import { getStudentPlanInfo } from '../utils/subscriptionAccess';
 
 interface StudentProfileViewProps {
-  onOpenMembership: () => void;
+  onOpenMembership: (plan?: 'basic' | 'premium') => void;
   onNavigateTab: (tab: string) => void;
 }
 
@@ -50,6 +53,7 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
   const studentAttempts = allAttempts.filter(a => a.studentId === currentStudent.id);
   const drawingsCount = savedDrawings.filter(d => d.studentId === currentStudent.id).length;
   const storiesCount = currentStudent.completedStoryIds?.length || 0;
+  const planInfo = getStudentPlanInfo(currentStudent);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-20 animate-in fade-in duration-200">
@@ -68,18 +72,30 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
                 <span className="px-3 py-0.5 rounded-full bg-white/20 text-white font-extrabold text-xs border border-white/25">
                   {currentStudent.classLevel}
                 </span>
+                <span className="px-3 py-0.5 rounded-full bg-slate-950/75 text-amber-300 font-extrabold text-xs border border-amber-300/40 flex items-center gap-1">
+                  <Crown className="w-3.5 h-3.5 text-amber-300" />
+                  <span>{planInfo.planDisplayName}</span>
+                </span>
               </div>
               <p className="text-amber-100 text-xs sm:text-sm font-medium">
-                Enrolled Student Account • UID: <span className="font-mono">{currentStudent.id}</span>
+                Enrolled Student Account • UID: <span className="font-mono">{currentStudent.id}</span> • Validity: <strong>{planInfo.daysRemainingDisplay}</strong>
               </p>
               <div className="flex flex-wrap items-center gap-2 pt-1">
-                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/90 text-white text-[11px] font-bold flex items-center gap-1 shadow-2xs">
+                <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1 shadow-2xs ${
+                  currentStudent.isPhoneVerified
+                    ? 'bg-emerald-500/90 text-white'
+                    : 'bg-black/25 text-amber-100 border border-white/25'
+                }`}>
                   <CheckCircle className="w-3 h-3" />
-                  <span>Phone Verified</span>
+                  <span>{currentStudent.isPhoneVerified ? 'Phone OTP Verified' : 'Phone Registered (Not OTP-Verified)'}</span>
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/90 text-white text-[11px] font-bold flex items-center gap-1 shadow-2xs">
+                <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1 shadow-2xs ${
+                  currentStudent.isEmailVerified
+                    ? 'bg-emerald-500/90 text-white'
+                    : 'bg-black/25 text-amber-100 border border-white/25'
+                }`}>
                   <CheckCircle className="w-3 h-3" />
-                  <span>Email Verified</span>
+                  <span>{currentStudent.isEmailVerified ? 'Email Link Verified' : 'Email Registered'}</span>
                 </span>
                 <span className="px-2.5 py-0.5 rounded-full bg-black/20 text-amber-200 text-[11px] font-bold">
                   🔥 {currentStudent.streakDays} Day Streak
@@ -89,11 +105,148 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
           </div>
 
           <button
-            onClick={onOpenMembership}
-            className="self-start sm:self-center px-4 py-2.5 rounded-2xl bg-white text-amber-900 font-extrabold text-xs shadow-md hover:bg-amber-50 transition-all cursor-pointer"
+            onClick={() => onOpenMembership(planInfo.effectivePlan === 'basic' ? 'premium' : 'premium')}
+            className="self-start sm:self-center px-4 py-2.5 rounded-2xl bg-white text-amber-900 font-extrabold text-xs shadow-md hover:bg-amber-50 transition-all cursor-pointer shrink-0"
           >
-            {currentStudent.plan === 'premium' ? 'VIP Member' : 'Upgrade Plan'}
+            {planInfo.isPaidPlanExpired
+              ? 'Renew Subscription (90 Days)'
+              : planInfo.effectivePlan === 'premium'
+              ? 'Extend Premium (90 Days)'
+              : 'Upgrade Plan (₹49 / ₹99)'}
           </button>
+        </div>
+      </div>
+
+      {/* 0. Account Subscription Status & 3-Plan Validity Overview (Synchronized with Firebase) */}
+      <div className="bg-white rounded-3xl p-6 sm:p-8 border-2 border-amber-200/90 shadow-xs space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Crown className="w-5 h-5 text-amber-600" />
+              <h2 className="text-lg font-display font-bold text-slate-900">
+                My Subscription Plan &amp; Validity
+              </h2>
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${
+                  planInfo.isPaidPlanExpired
+                    ? 'bg-rose-100 text-rose-800 border-rose-300'
+                    : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                }`}
+              >
+                ● {planInfo.isPaidPlanExpired ? 'PAID PLAN EXPIRED • FREE PLAN ACTIVE' : `${planInfo.statusLabel} (${planInfo.daysRemainingDisplay})`}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 font-medium mt-1">
+              {planInfo.isPaidPlanExpired
+                ? `Your previous ${planInfo.expiredPlanName} expired. You are currently on FREE PLAN – ₹0 – Lifetime. Renew your ₹49 or ₹99 plan for 90 Days access.`
+                : `Current Active Plan: ${planInfo.planDisplayName} • Remaining Validity: ${planInfo.daysRemainingDisplay}`}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onOpenMembership('premium')}
+            className="self-start sm:self-auto px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-extrabold text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+          >
+            {planInfo.isPaidPlanExpired ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Renew Plan (90 Days)</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{planInfo.effectivePlan === 'premium' ? 'Extend 90-Day Plan' : 'Upgrade Plan (90 Days)'}</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* 4 Key Account Subscription Metrics */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+            <span className="font-bold text-slate-400 uppercase text-[10px] block">Current Active Plan</span>
+            <span className="font-extrabold text-xs sm:text-sm text-slate-900 block mt-0.5">{planInfo.planDisplayName}</span>
+          </div>
+          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+            <span className="font-bold text-slate-400 uppercase text-[10px] block">Subscription Status</span>
+            <span className={`font-extrabold text-xs sm:text-sm block mt-0.5 ${planInfo.isPaidPlanExpired ? 'text-rose-700' : 'text-emerald-700'}`}>
+              {planInfo.isPaidPlanExpired ? 'EXPIRED (Free Plan Active)' : 'ACTIVE'}
+            </span>
+          </div>
+          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+            <span className="font-bold text-slate-400 uppercase text-[10px] block">Remaining Validity</span>
+            <span className="font-extrabold text-xs sm:text-sm text-amber-900 block mt-0.5">{planInfo.daysRemainingDisplay}</span>
+          </div>
+          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+            <span className="font-bold text-slate-400 uppercase text-[10px] block">Valid Until / Expiry</span>
+            <span className="font-bold text-xs text-emerald-700 block mt-0.5">{planInfo.expiryDisplay}</span>
+          </div>
+        </div>
+
+        {/* All 3 Subscription Plans Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+          {/* 1. FREE PLAN – ₹0 – Lifetime */}
+          <div className={`p-4 rounded-2xl border-2 flex flex-col justify-between ${
+            planInfo.effectivePlan === 'free' ? 'border-emerald-500 bg-emerald-50/40' : 'border-slate-200 bg-slate-50/60'
+          }`}>
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 inline-block mb-1.5">
+                FREE PLAN – ₹0 – Lifetime
+              </span>
+              <p className="text-base font-black text-slate-900">₹0 • Lifetime</p>
+              <p className="text-[11px] text-slate-600 mt-1">
+                Brain Puzzles, Sudoku, English &amp; Mathematics Quizzes. Never expires.
+              </p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-emerald-200/60 text-[11px] font-extrabold text-emerald-800">
+              {planInfo.effectivePlan === 'free' ? '✓ Currently Active Plan' : '✓ Included Forever'}
+            </div>
+          </div>
+
+          {/* 2. STANDARD PLAN – ₹49 – 90 Days */}
+          <div
+            onClick={() => onOpenMembership('basic')}
+            className={`p-4 rounded-2xl border-2 flex flex-col justify-between cursor-pointer transition-all ${
+              planInfo.effectivePlan === 'basic' ? 'border-indigo-600 bg-indigo-50/50' : 'border-indigo-200 hover:border-indigo-400 bg-indigo-50/20'
+            }`}
+          >
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-indigo-600 text-white inline-block mb-1.5">
+                STANDARD PLAN – ₹49 – 90 Days
+              </span>
+              <p className="text-base font-black text-indigo-900">₹49 • 90 Days (3 Months)</p>
+              <p className="text-[11px] text-slate-600 mt-1">
+                All 14 School Subjects, Shivaji Stories, Story World &amp; Drawing Studio.
+              </p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-indigo-200/60 text-[11px] font-extrabold text-indigo-700 flex items-center justify-between">
+              <span>{planInfo.effectivePlan === 'basic' ? '✓ Active (Extend 90 Days)' : 'Upgrade / Renew ₹49 (90 Days)'}</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </div>
+          </div>
+
+          {/* 3. PREMIUM PLAN – ₹99 – 90 Days */}
+          <div
+            onClick={() => onOpenMembership('premium')}
+            className={`p-4 rounded-2xl border-2 flex flex-col justify-between cursor-pointer transition-all ${
+              planInfo.effectivePlan === 'premium' ? 'border-amber-500 bg-amber-50/60' : 'border-amber-300 hover:border-amber-500 bg-amber-50/30'
+            }`}
+          >
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-600 text-white inline-block mb-1.5">
+                PREMIUM PLAN – ₹99 – 90 Days
+              </span>
+              <p className="text-base font-black text-amber-900">₹99 • 90 Days (3 Months)</p>
+              <p className="text-[11px] text-slate-700 mt-1">
+                Full Unlock: Cricket, Scholarship (4th &amp; 7th), AI Academy, Certificates &amp; All 14 Subjects.
+              </p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-amber-200/80 text-[11px] font-extrabold text-amber-900 flex items-center justify-between">
+              <span>{planInfo.effectivePlan === 'premium' ? '✓ Active (Extend 90 Days)' : 'Upgrade / Renew ₹99 (90 Days)'}</span>
+              <ArrowRight className="w-3.5 h-3.5 text-orange-600" />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -115,10 +268,14 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
             <div className="flex items-center justify-between">
               <span className="font-bold text-slate-500 flex items-center gap-1.5">
                 <Phone className="w-3.5 h-3.5 text-slate-400" />
-                <span>Mobile Number (SMS OTP)</span>
+                <span>Registered Mobile Number</span>
               </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-emerald-100 text-emerald-800">
-                Firebase Verified
+              <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${
+                currentStudent.isPhoneVerified
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : 'bg-amber-100 text-amber-900'
+              }`}>
+                {currentStudent.isPhoneVerified ? 'OTP Ownership Verified' : 'Registered (Not OTP-Verified)'}
               </span>
             </div>
             <p className="font-mono font-bold text-sm text-slate-800">
@@ -131,10 +288,14 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
             <div className="flex items-center justify-between">
               <span className="font-bold text-slate-500 flex items-center gap-1.5">
                 <Mail className="w-3.5 h-3.5 text-slate-400" />
-                <span>Email Address (Link)</span>
+                <span>Registered Email Address</span>
               </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-emerald-100 text-emerald-800">
-                Firebase Verified
+              <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${
+                currentStudent.isEmailVerified
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : 'bg-blue-100 text-blue-900'
+              }`}>
+                {currentStudent.isEmailVerified ? 'Link Verified' : 'Registered Account Email'}
               </span>
             </div>
             <p className="font-medium text-xs text-slate-800 truncate" title={currentStudent.email}>

@@ -39,8 +39,12 @@ import {
   saveScholarshipAttemptToFirestore,
   loginFirebaseEmailUser,
   sendFirebasePasswordReset,
+  confirmFirebasePasswordReset,
   signOutFirebaseUser,
-  saveStudentProfileToFirestore
+  saveStudentProfileToFirestore,
+  saveSubscriptionToFirestore,
+  fetchStudentSubscriptionFromFirestore,
+  computePaidPlanExpiryIsoDate
 } from '../services/firebase';
 import { 
   ScholarshipClass, 
@@ -114,12 +118,13 @@ interface AppContextType {
   // Auth & Session methods - Strict 1 Account = 1 Student = 1 Class
   registerStudent: (
     data: Omit<StudentProfile, 'id' | 'points' | 'coins' | 'level' | 'streakDays' | 'lastActiveDate' | 'badges' | 'plan' | 'attemptedQuestionIds' | 'attemptedPuzzleIds' | 'completedStoryIds' | 'registeredAt' | 'classChangeLogs' | 'subjectProgress'>,
-    options?: { verifiedFirebaseUid?: string; isPhoneVerified?: boolean; isEmailVerified?: boolean }
+    options?: { verifiedFirebaseUid?: string; isPhoneVerified?: boolean; isEmailVerified?: boolean; password?: string }
   ) => RegistrationResult;
   loginWithEmail: (email: string, password?: string) => Promise<{ success: boolean; message: string; student?: StudentProfile }>;
   loginWithMobileOtp: (mobile: string, otp: string) => { success: boolean; message: string; student?: StudentProfile };
   loginWithVerifiedPhone: (mobile: string, firebaseUid?: string) => { success: boolean; message: string; student?: StudentProfile };
-  recoverAccount: (identifier: string) => Promise<{ success: boolean; message: string; student?: StudentProfile }>;
+  recoverAccount: (email: string) => Promise<{ success: boolean; message: string; student?: StudentProfile }>;
+  completePasswordReset: (oobCode: string, newPassword: string) => Promise<{ success: boolean; message: string; email?: string; student?: StudentProfile }>;
   logout: () => Promise<void>;
   quickSwitchStudent: (studentId: string) => void;
   isAuthModalOpen: boolean;
@@ -523,15 +528,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : INITIAL_STUDENT;
   });
 
-  const [allQuestions, setAllQuestions] = useState<QuizQuestion[]>(() => {
-    const seed = getInitialSeedQuestions();
-    const saved = localStorage.getItem('vc_questions_bank');
-    if (!saved) return seed;
+  const safeSetLocalStorage = (key: string, value: string) => {
     try {
-      const parsed: QuizQuestion[] = JSON.parse(saved);
-      const existingIds = new Set(parsed.map(q => q.id));
-      const missingSeeds = seed.filter(s => !existingIds.has(s.id));
-      return [...parsed, ...missingSeeds];
+      localStorage.setItem(key, value);
+    } catch (err) {
+      // Free up space by removing legacy oversized question caches if QuotaExceededError occurs
+      try {
+        localStorage.removeItem('vc_questions_bank');
+        localStorage.removeItem('vc_questions_bank_v2');
+        localStorage.removeItem('vc_questions_bank_v3');
+        localStorage.setItem(key, value);
+      } catch (retryErr) {
+        console.warn(`LocalStorage quota limit reached for ${key}:`, retryErr);
+      }
+    }
+  };
+
+  const [allQuestions, setAllQuestions] = useState<QuizQuestion[]>(() => {
+    // Purge legacy oversized full-bank keys to free browser localStorage quota
+    try {
+      localStorage.removeItem('vc_questions_bank');
+      localStorage.removeItem('vc_questions_bank_v2');
+      localStorage.removeItem('vc_questions_bank_v3');
+    } catch (e) {}
+
+    const seed = getInitialSeedQuestions();
+    const savedCustom = localStorage.getItem('vc_custom_questions_v3');
+    if (!savedCustom) return seed;
+    try {
+      const parsedCustom: QuizQuestion[] = JSON.parse(savedCustom);
+      const seedMap = new Map<string, QuizQuestion>();
+      for (const s of seed) {
+        seedMap.set(s.id, s);
+      }
+      for (const customQ of parsedCustom) {
+        seedMap.set(customQ.id, customQ);
+      }
+      return Array.from(seedMap.values());
     } catch (e) {
       return seed;
     }
@@ -603,62 +636,71 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
   });
 
-  // Sync to local storage
+  // Sync to local storage safely without exceeding browser quota
   useEffect(() => {
-    localStorage.setItem('vc_students_list', JSON.stringify(studentsList));
+    safeSetLocalStorage('vc_students_list', JSON.stringify(studentsList));
   }, [studentsList]);
 
   useEffect(() => {
     if (currentStudent) {
-      localStorage.setItem('vc_current_student', JSON.stringify(currentStudent));
+      safeSetLocalStorage('vc_current_student', JSON.stringify(currentStudent));
     }
   }, [currentStudent]);
 
   useEffect(() => {
-    localStorage.setItem('vc_questions_bank', JSON.stringify(allQuestions));
+    // Only persist custom or modified questions (built-in 3,920 curriculum questions load from code)
+    const customQuestionsOnly = allQuestions.filter(
+      q => q.author !== 'curriculum-expert' || q.status === 'rejected'
+    );
+    safeSetLocalStorage('vc_custom_questions_v3', JSON.stringify(customQuestionsOnly));
   }, [allQuestions]);
 
   useEffect(() => {
-    localStorage.setItem('vc_rejected_questions', JSON.stringify(rejectedDuplicates));
+    safeSetLocalStorage('vc_rejected_questions', JSON.stringify(rejectedDuplicates));
   }, [rejectedDuplicates]);
 
   useEffect(() => {
-    localStorage.setItem('vc_saved_drawings', JSON.stringify(savedDrawings));
+    safeSetLocalStorage('vc_saved_drawings', JSON.stringify(savedDrawings));
   }, [savedDrawings]);
 
   useEffect(() => {
-    localStorage.setItem('vc_drawing_templates', JSON.stringify(drawingTemplates));
+    // Only persist custom drawing templates added by admin
+    const builtInIds = new Set(READY_MADE_DRAWING_TEMPLATES.map(t => t.id));
+    const customTemplates = drawingTemplates.filter(t => !builtInIds.has(t.id));
+    safeSetLocalStorage('vc_drawing_templates', JSON.stringify(customTemplates));
   }, [drawingTemplates]);
 
   useEffect(() => {
-    localStorage.setItem('vc_quiz_attempts', JSON.stringify(allAttempts));
+    safeSetLocalStorage('vc_quiz_attempts', JSON.stringify(allAttempts));
   }, [allAttempts]);
 
   useEffect(() => {
-    localStorage.setItem('vc_transactions', JSON.stringify(transactions));
+    safeSetLocalStorage('vc_transactions', JSON.stringify(transactions));
   }, [transactions]);
 
   useEffect(() => {
-    localStorage.setItem('vc_notifications', JSON.stringify(notifications));
+    safeSetLocalStorage('vc_notifications', JSON.stringify(notifications));
   }, [notifications]);
 
   useEffect(() => {
-    localStorage.setItem('vc_platform_settings', JSON.stringify(platformSettings));
+    safeSetLocalStorage('vc_platform_settings', JSON.stringify(platformSettings));
   }, [platformSettings]);
 
   useEffect(() => {
-    localStorage.setItem('vc_parents_list', JSON.stringify(parentsList));
+    safeSetLocalStorage('vc_parents_list', JSON.stringify(parentsList));
   }, [parentsList]);
 
   useEffect(() => {
-    localStorage.setItem('vc_announcements', JSON.stringify(announcements));
+    safeSetLocalStorage('vc_announcements', JSON.stringify(announcements));
   }, [announcements]);
 
   useEffect(() => {
     if (currentUser) {
-      localStorage.setItem('vc_current_user', JSON.stringify(currentUser));
+      safeSetLocalStorage('vc_current_user', JSON.stringify(currentUser));
     } else {
-      localStorage.removeItem('vc_current_user');
+      try {
+        localStorage.removeItem('vc_current_user');
+      } catch (e) {}
     }
   }, [currentUser]);
 
@@ -667,15 +709,71 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     testFirestoreConnection();
   }, []);
 
+  // Synchronize displayed subscription status with actual subscription stored in Firebase Firestore
+  useEffect(() => {
+    const activeId = currentStudent?.id;
+    if (!activeId) return;
+
+    let cancelled = false;
+    fetchStudentSubscriptionFromFirestore(activeId).then((fbSub) => {
+      if (cancelled || !fbSub.found || !fbSub.plan) return;
+      setCurrentStudent((prev) => {
+        if (!prev || prev.id !== activeId) return prev;
+        if (
+          prev.plan === fbSub.plan &&
+          (prev.planExpiresAt || null) === (fbSub.planExpiresAt || null)
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          plan: fbSub.plan!,
+          planPurchasedAt: fbSub.planPurchasedAt || prev.planPurchasedAt,
+          planExpiresAt: fbSub.planExpiresAt || undefined,
+        };
+      });
+      setStudentsList((prevList) =>
+        prevList.map((s) =>
+          s.id === activeId
+            ? {
+                ...s,
+                plan: fbSub.plan!,
+                planPurchasedAt: fbSub.planPurchasedAt || s.planPurchasedAt,
+                planExpiresAt: fbSub.planExpiresAt || undefined,
+              }
+            : s
+        )
+      );
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentStudent?.id]);
+
   // Strict Auth Functions - One Account = One Student = One Mobile = One Email = One Class
   const registerStudent = (
     data: Omit<StudentProfile, 'id' | 'points' | 'coins' | 'level' | 'streakDays' | 'lastActiveDate' | 'badges' | 'plan' | 'attemptedQuestionIds' | 'attemptedPuzzleIds' | 'completedStoryIds' | 'registeredAt' | 'classChangeLogs' | 'subjectProgress'>,
-    options?: { verifiedFirebaseUid?: string; isPhoneVerified?: boolean; isEmailVerified?: boolean }
+    options?: { verifiedFirebaseUid?: string; isPhoneVerified?: boolean; isEmailVerified?: boolean; password?: string }
   ): RegistrationResult => {
     const cleanMobile = data.mobile.replace(/\D/g, '').slice(-10);
     const cleanEmail = data.email.trim().toLowerCase();
 
-    // 1. Strict Duplicate Mobile Check
+    if (cleanMobile.length !== 10) {
+      return {
+        success: false,
+        message: 'A valid 10-digit mobile number is compulsory for registration.'
+      };
+    }
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return {
+        success: false,
+        message: 'A valid email address is compulsory for registration.'
+      };
+    }
+
+    // 1. Strict Duplicate Mobile Check (One Mobile Number = One Account)
     const existingMobile = studentsList.find(s => s.mobile.replace(/\D/g, '').slice(-10) === cleanMobile);
     if (existingMobile) {
       return {
@@ -683,11 +781,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         duplicateField: 'mobile',
         existingStudentName: existingMobile.name,
         existingClass: existingMobile.classLevel,
-        message: `Mobile number ${data.mobile} is already registered with student "${existingMobile.name}" (${existingMobile.classLevel}). One mobile number cannot be shared between multiple student accounts. Each student must have a separate, unique mobile number.`
+        message: `Mobile number ${cleanMobile} is already registered with student "${existingMobile.name}" (${existingMobile.classLevel}). One mobile number cannot be used for multiple accounts.`
       };
     }
 
-    // 2. Strict Duplicate Email Check
+    // 2. Strict Duplicate Email Check (One Email Address = One Account)
     const existingEmail = studentsList.find(s => s.email.trim().toLowerCase() === cleanEmail);
     if (existingEmail) {
       return {
@@ -695,40 +793,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         duplicateField: 'email',
         existingStudentName: existingEmail.name,
         existingClass: existingEmail.classLevel,
-        message: `Email address "${data.email}" is already registered with student "${existingEmail.name}" (${existingEmail.classLevel}). One email address cannot be used for multiple student accounts.`
+        message: `Email address "${cleanEmail}" is already registered with student "${existingEmail.name}" (${existingEmail.classLevel}). One email address cannot be used for multiple accounts.`
       };
     }
 
-    // 3. Mandatory Dual Verification: Require both phone and email verifications before account activation
-    if (!options?.isPhoneVerified || !options?.isEmailVerified) {
-      return {
-        success: true,
-        requiresDualVerification: true,
-        message: 'Student details validated. Both Mobile SMS OTP and Email Link Verification are required before account activation.'
-      };
-    }
-
-    // 4. Verification complete - Activate student account
-    const newUid = options.verifiedFirebaseUid || `uid_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+    // 3. Create & Activate Student Account
+    // SECURITY REQUIREMENT: Since OTP verification is not required during simple registration,
+    // NEVER falsely mark mobile numbers as OTP-verified (isPhoneVerified defaults strictly to false).
+    const phoneOwnershipVerified = Boolean(options?.isPhoneVerified);
+    const emailOwnershipVerified = Boolean(options?.isEmailVerified);
+    const newUid = options?.verifiedFirebaseUid || `uid_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
     const nowIso = new Date().toISOString();
 
     const newStudent: StudentProfile = {
       ...data,
       id: newUid,
-      firebaseUid: options.verifiedFirebaseUid,
-      isPhoneVerified: true,
-      isEmailVerified: true,
+      firebaseUid: options?.verifiedFirebaseUid,
+      passwordHash: options?.password || data.passwordHash,
+      isPhoneVerified: phoneOwnershipVerified, // false unless genuinely OTP-verified
+      isEmailVerified: emailOwnershipVerified,
       mobile: cleanMobile,
       email: cleanEmail,
       registeredAt: nowIso,
-      points: 100, // 100 Welcome Bonus points upon dual verification
+      points: 100, // 100 Welcome Bonus points
       coins: 50,
       level: 1,
       streakDays: 1,
       lastActiveDate: nowIso,
-      badges: ['badge-first-quiz', 'badge-verified-student'],
+      badges: ['badge-first-quiz'],
       plan: 'free',
-      avatar: '🌟',
+      avatar: data.avatar || '🌟',
       attemptedQuestionIds: [],
       attemptedPuzzleIds: [],
       completedStoryIds: [],
@@ -738,6 +832,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStudentsList(prev => [...prev, newStudent]);
     localStorage.removeItem('vc_is_logged_out');
     setCurrentStudent(newStudent);
+    setCurrentUser({
+      uid: newStudent.id,
+      email: newStudent.email,
+      displayName: newStudent.name,
+      role: 'student',
+      studentId: newStudent.id,
+      isVerified: true
+    });
     setActiveRole('student');
 
     saveStudentProfileToFirestore(newStudent).catch(err => {
@@ -745,14 +847,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     addNotification(
-      'Account Fully Verified & Activated! 🎓✨',
-      `Welcome ${newStudent.name}! You are permanently registered in ${newStudent.classLevel}. Both Mobile OTP and Email verification succeeded.`,
+      'Account Registered & Activated! 🎓✨',
+      `Welcome ${newStudent.name}! Your account in ${newStudent.classLevel} is ready. (Phone Status: Registered — Not OTP-Verified).`,
       'achievement'
     );
 
     return {
       success: true,
-      message: `Account created and verified successfully for ${newStudent.name} in ${newStudent.classLevel}!`,
+      message: `Account registered successfully for ${newStudent.name} in ${newStudent.classLevel}!`,
       student: newStudent
     };
   };
@@ -761,61 +863,70 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const cleanEmail = email.trim().toLowerCase();
     const found = studentsList.find(s => s.email.trim().toLowerCase() === cleanEmail);
 
+    if (!found) {
+      return {
+        success: false,
+        message: `No registered student account found with email "${email}". Please check your email address or register a new account.`
+      };
+    }
+
     if (password && password.length >= 6) {
       const fbRes = await loginFirebaseEmailUser(cleanEmail, password);
       if (fbRes.success) {
-        if (found) {
-          const updated: StudentProfile = {
-            ...found,
-            isEmailVerified: true,
-            firebaseUid: fbRes.user?.uid || found.firebaseUid
-          };
-          localStorage.removeItem('vc_is_logged_out');
-          setCurrentStudent(updated);
-          setCurrentUser({
-            uid: updated.id,
-            email: updated.email,
-            displayName: updated.name,
-            role: 'student',
-            studentId: updated.id,
-            isVerified: true
-          });
-          setActiveRole('student');
-          return { success: true, message: `Welcome back, ${found.name}! Successfully signed in as Student.`, student: updated };
-        }
-      } else if (!found) {
-        return { success: false, message: fbRes.error || `No student account found with email "${email}".` };
+        // Firebase Auth succeeded (including when the user just reset their password via Firebase email link!)
+        // Preserve the existing student's account, subscription plan, payment history, and saved progress
+        const updated: StudentProfile = {
+          ...found,
+          firebaseUid: fbRes.user?.uid || found.firebaseUid,
+          passwordHash: password
+        };
+        setStudentsList(prev => prev.map(s => s.id === updated.id ? updated : s));
+        localStorage.removeItem('vc_is_logged_out');
+        setCurrentStudent(updated);
+        setCurrentUser({
+          uid: updated.id,
+          email: updated.email,
+          displayName: updated.name,
+          role: 'student',
+          studentId: updated.id,
+          isVerified: true
+        });
+        setActiveRole('student');
+        saveStudentProfileToFirestore(updated).catch(() => {});
+        return { success: true, message: `Welcome back, ${found.name}! Successfully signed in as Student.`, student: updated };
+      }
+
+      // If student has a stored passwordHash and it doesn't match, block login with a clear error
+      if (found.passwordHash && found.passwordHash !== password) {
+        return {
+          success: false,
+          message: 'Incorrect password. Please enter your valid password or click "Forgot Password?" below to reset it.'
+        };
       }
     }
 
-    if (found) {
-      localStorage.removeItem('vc_is_logged_out');
-      setCurrentStudent(found);
-      setCurrentUser({
-        uid: found.id,
-        email: found.email,
-        displayName: found.name,
-        role: 'student',
-        studentId: found.id,
-        isVerified: true
-      });
-      setActiveRole('student');
-      return { success: true, message: `Welcome back, ${found.name}! Signed in as Student.`, student: found };
-    }
-
-    return {
-      success: false,
-      message: `No student account found with email "${email}". Each student requires an individual account. Please check credentials or register as a new student.`
-    };
+    localStorage.removeItem('vc_is_logged_out');
+    setCurrentStudent(found);
+    setCurrentUser({
+      uid: found.id,
+      email: found.email,
+      displayName: found.name,
+      role: 'student',
+      studentId: found.id,
+      isVerified: true
+    });
+    setActiveRole('student');
+    return { success: true, message: `Welcome back, ${found.name}! Signed in as Student.`, student: found };
   };
 
   const loginWithVerifiedPhone = (mobile: string, firebaseUid?: string): { success: boolean; message: string; student?: StudentProfile } => {
     const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
     const found = studentsList.find(s => s.mobile.replace(/\D/g, '').slice(-10) === cleanMobile);
     if (found) {
+      // Only mark isPhoneVerified: true if a genuine firebaseUid from Phone Auth was passed
       const updated: StudentProfile = {
         ...found,
-        isPhoneVerified: true,
+        isPhoneVerified: firebaseUid ? true : Boolean(found.isPhoneVerified),
         firebaseUid: firebaseUid || found.firebaseUid
       };
       localStorage.removeItem('vc_is_logged_out');
@@ -829,11 +940,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isVerified: true
       });
       setActiveRole('student');
-      return { success: true, message: `Welcome back, ${found.name}! Phone verified via Firebase OTP.`, student: updated };
+      return { success: true, message: `Welcome back, ${found.name}! Signed in with registered mobile number.`, student: updated };
     }
     return {
       success: false,
-      message: `Mobile number ${mobile} was verified, but no student account matches this number in our registry. Please register as a new student.`
+      message: `No student account matches mobile number ${cleanMobile}. Please register as a new student first.`
     };
   };
 
@@ -984,36 +1095,86 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { allowed: true };
   };
 
-  // Account Recovery / Forgot Access - Sends genuine Firebase Password Reset email
-  const recoverAccount = async (identifier: string): Promise<{ success: boolean; message: string; student?: StudentProfile }> => {
-    const clean = identifier.trim().toLowerCase();
-    const cleanMobile = identifier.replace(/\D/g, '').slice(-10);
+  // Account Recovery / Forgot Password - Sends genuine Firebase Password Reset email ONLY to registered email addresses
+  const recoverAccount = async (email: string): Promise<{ success: boolean; message: string; student?: StudentProfile }> => {
+    const cleanEmail = email.trim().toLowerCase();
 
-    const found = studentsList.find(s => 
-      s.email.toLowerCase() === clean || 
-      (cleanMobile.length === 10 && s.mobile.replace(/\D/g, '').slice(-10) === cleanMobile)
-    );
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return {
+        success: false,
+        message: 'Please enter a valid email address (for example, student@example.com).'
+      };
+    }
 
-    if (found) {
-      const resetRes = await sendFirebasePasswordReset(found.email);
-      if (resetRes.success) {
-        return {
-          success: true,
-          message: `Password reset instructions have been sent to ${found.email} for student ${found.name}. Please check your inbox and click the link to choose a new password.`,
-          student: found
-        };
-      } else {
-        return {
-          success: false,
-          message: resetRes.error || `Unable to send password reset email to ${found.email}.`,
-          student: found
-        };
-      }
+    const foundStudent = studentsList.find(s => s.email.trim().toLowerCase() === cleanEmail);
+    const foundParent = parentsList.find(p => p.email.trim().toLowerCase() === cleanEmail);
+    const isAdminEmail = cleanEmail === 'ronakvarade2022@gmail.com' || cleanEmail === 'admin@vacationchampions.com';
+
+    if (!foundStudent && !foundParent && !isAdminEmail) {
+      return {
+        success: false,
+        message: `No registered account was found with "${cleanEmail}". Please enter the email address registered with your Champion Learning account.`
+      };
+    }
+
+    const resetRes = await sendFirebasePasswordReset(cleanEmail, {
+      ensureRegisteredInFirebase: true
+    });
+
+    if (resetRes.success) {
+      return {
+        success: true,
+        message: `A secure password reset link has been sent to ${cleanEmail}${foundStudent ? ` (${foundStudent.name})` : ''}. Please open your email and click the reset link to create a new password. Your existing account, subscription plan, payment history, and saved progress remain completely intact.`,
+        student: foundStudent
+      };
     }
 
     return {
       success: false,
-      message: `No student account matches "${identifier}". Please verify the email or 10-digit mobile number.`
+      message: resetRes.error || `Unable to send password reset email to ${cleanEmail}. Please try again.`,
+      student: foundStudent
+    };
+  };
+
+  // Complete Password Reset using Firebase oobCode while preserving existing account, subscription, payments, and progress
+  const completePasswordReset = async (
+    oobCode: string,
+    newPassword: string
+  ): Promise<{ success: boolean; message: string; email?: string; student?: StudentProfile }> => {
+    const confirmRes = await confirmFirebasePasswordReset(oobCode, newPassword);
+    if (!confirmRes.success || !confirmRes.email) {
+      return {
+        success: false,
+        message: confirmRes.error || 'Failed to reset password. The reset link may have expired.'
+      };
+    }
+
+    const cleanEmail = confirmRes.email.trim().toLowerCase();
+    const existingStudent = studentsList.find(s => s.email.trim().toLowerCase() === cleanEmail);
+
+    if (existingStudent) {
+      // Update password credential on existing student WITHOUT creating a new account or altering plan/progress
+      const updatedStudent: StudentProfile = {
+        ...existingStudent,
+        passwordHash: newPassword
+      };
+      setStudentsList(prev => prev.map(s => s.id === updatedStudent.id ? updatedStudent : s));
+      if (currentStudent?.id === updatedStudent.id) {
+        setCurrentStudent(updatedStudent);
+      }
+      await saveStudentProfileToFirestore(updatedStudent).catch(() => {});
+      return {
+        success: true,
+        email: cleanEmail,
+        student: updatedStudent,
+        message: `Your password for ${cleanEmail} has been updated! Your existing account, subscription plan, payment history, and learning progress have been preserved. You can now log in with your new password.`
+      };
+    }
+
+    return {
+      success: true,
+      email: cleanEmail,
+      message: `Your password for ${cleanEmail} has been updated! You can now log in using your new password.`
     };
   };
 
@@ -1702,9 +1863,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTransactions(prev => [result.transaction, ...prev]);
 
     if (result.success) {
-      const now = new Date();
-      const expires = new Date();
-      expires.setDate(now.getDate() + 30);
+      const computedDates = computePaidPlanExpiryIsoDate(student.planExpiresAt);
 
       const updatedBadges = [...student.badges];
       if (!updatedBadges.includes('badge-champion-premium')) {
@@ -1714,8 +1873,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const updatedStudent: StudentProfile = {
         ...student,
         plan: planId,
-        planPurchasedAt: now.toISOString().split('T')[0],
-        planExpiresAt: expires.toISOString().split('T')[0],
+        planPurchasedAt: computedDates.purchasedAt,
+        planExpiresAt: computedDates.expiresAt,
         points: student.points + (planId === 'premium' ? 250 : 100),
         badges: updatedBadges
       };
@@ -1723,15 +1882,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCurrentStudent(updatedStudent);
       setStudentsList(prev => prev.map(s => s.id === updatedStudent.id ? updatedStudent : s));
 
+      saveStudentProfileToFirestore(updatedStudent).catch(() => {});
+      saveSubscriptionToFirestore(updatedStudent.id, {
+        plan: planId,
+        planPurchasedAt: updatedStudent.planPurchasedAt,
+        planExpiresAt: updatedStudent.planExpiresAt,
+        currentExpiresAt: student.planExpiresAt,
+        paymentId: result.transaction.paymentId,
+        orderId: result.transaction.orderId,
+        amountInr: result.transaction.amount
+      }).catch(() => {});
+
+      fetch('/api/subscription/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId: updatedStudent.id,
+          plan: planId,
+          planPurchasedAt: updatedStudent.planPurchasedAt,
+          planExpiresAt: updatedStudent.planExpiresAt,
+          paymentId: result.transaction.paymentId
+        })
+      }).catch(() => {});
+
       addNotification(
         'Membership Activated! 👑',
-        `${planId === 'premium' ? 'Champion Premium' : 'Champion Basic'} plan active. Receipt #${result.transaction.receiptNumber}.`,
+        `${planId === 'premium' ? 'Premium Plan (₹99)' : 'Standard Plan (₹49)'} active. Receipt #${result.transaction.receiptNumber}.`,
         'membership'
       );
     } else {
       addNotification(
         'Payment Transaction Failed',
-        result.error || 'Payment was declined by payment gateway.',
+        result.error || 'Payment was declined by payment gateway. Paid plan was not activated.',
         'challenge'
       );
     }
@@ -1742,20 +1924,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Automatic Verified Membership Activation (from Razorpay server verification)
   const activateVerifiedMembership = (transaction: PaymentTransaction, customExpiryDate?: string) => {
     const student = currentStudent || INITIAL_STUDENT;
-    const now = new Date();
-    let expiryDate = new Date();
-
-    if (customExpiryDate) {
-      expiryDate = new Date(customExpiryDate);
-    } else if (student.planExpiresAt && new Date(student.planExpiresAt) > now) {
-      // Respect active validity: extend +30 days from existing expiry date
-      const existing = new Date(student.planExpiresAt);
-      existing.setDate(existing.getDate() + 30);
-      expiryDate = existing;
-    } else {
-      // 30 days from now
-      expiryDate.setDate(now.getDate() + 30);
-    }
+    const computedDates = computePaidPlanExpiryIsoDate(student.planExpiresAt);
+    const resolvedExpiresAt = customExpiryDate || computedDates.expiresAt;
 
     const updatedBadges = [...student.badges];
     if (transaction.planId === 'premium' && !updatedBadges.includes('badge-champion-premium')) {
@@ -1765,8 +1935,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updatedStudent: StudentProfile = {
       ...student,
       plan: transaction.planId,
-      planPurchasedAt: now.toISOString().split('T')[0],
-      planExpiresAt: expiryDate.toISOString().split('T')[0],
+      planPurchasedAt: computedDates.purchasedAt,
+      planExpiresAt: resolvedExpiresAt,
       points: student.points + (transaction.planId === 'premium' ? 250 : 100),
       badges: updatedBadges
     };
@@ -1775,9 +1945,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStudentsList(prev => prev.map(s => s.id === updatedStudent.id ? updatedStudent : s));
     setTransactions(prev => [transaction, ...prev.filter(t => t.paymentId !== transaction.paymentId)]);
 
+    saveStudentProfileToFirestore(updatedStudent).catch(() => {});
+    saveSubscriptionToFirestore(updatedStudent.id, {
+      plan: transaction.planId,
+      planPurchasedAt: updatedStudent.planPurchasedAt,
+      planExpiresAt: updatedStudent.planExpiresAt,
+      currentExpiresAt: student.planExpiresAt,
+      paymentId: transaction.paymentId,
+      orderId: transaction.orderId,
+      amountInr: transaction.amount
+    }).catch(() => {});
+
+    fetch('/api/subscription/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        studentId: updatedStudent.id,
+        plan: transaction.planId,
+        planPurchasedAt: updatedStudent.planPurchasedAt,
+        planExpiresAt: updatedStudent.planExpiresAt,
+        paymentId: transaction.paymentId
+      })
+    }).catch(() => {});
+
     addNotification(
       'Membership Activated! 👑',
-      `${transaction.planId === 'premium' ? 'Champion Premium (₹99)' : 'Champion Basic (₹49)'} activated successfully for 30 days. Payment ID: ${transaction.paymentId}.`,
+      `${transaction.planId === 'premium' ? 'Premium Plan (₹99)' : 'Standard Plan (₹49)'} activated successfully for 3 months (90 days). Payment ID: ${transaction.paymentId}.`,
       'membership'
     );
   };
@@ -1900,6 +2093,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         loginWithMobileOtp,
         loginWithVerifiedPhone,
         recoverAccount,
+        completePasswordReset,
         logout,
         quickSwitchStudent,
         isAuthModalOpen,

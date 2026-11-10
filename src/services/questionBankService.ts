@@ -102,37 +102,9 @@ const CLASS_PARTITIONS: Record<ClassLevel, QuizQuestion[]> = {
   'Class 8': [...CLASS_8_QUESTIONS]
 };
 
-// Returns initial unified question list across all classes with 4 levels x 10 questions for all 14 subjects
+// Returns initial unified question list across all classes with 4 levels x 10 unique questions for all 14 subjects (560 unique questions per class)
 export function getInitialSeedQuestions(): QuizQuestion[] {
-  const masterCurriculum = generateEntireCurriculumMasterBank();
-  const existingLegacy = [
-    ...CLASS_2_QUESTIONS,
-    ...CLASS_3_QUESTIONS,
-    ...CLASS_4_QUESTIONS,
-    ...CLASS_5_QUESTIONS,
-    ...CLASS_6_QUESTIONS,
-    ...CLASS_7_QUESTIONS,
-    ...CLASS_8_QUESTIONS
-  ];
-
-  // Map legacy to have level 1 if undefined
-  const normalizedLegacy = existingLegacy.map(q => ({
-    ...q,
-    level: q.level || (1 as QuizLevel)
-  }));
-
-  // Merge unique by ID
-  const map = new Map<string, QuizQuestion>();
-  for (const q of masterCurriculum) {
-    map.set(q.id, q);
-  }
-  for (const q of normalizedLegacy) {
-    if (!map.has(q.id)) {
-      map.set(q.id, q);
-    }
-  }
-
-  return Array.from(map.values());
+  return generateEntireCurriculumMasterBank();
 }
 
 // Dynamic Curriculum Generator that respects Class-Specific topics, progression, and 15 question types
@@ -442,38 +414,41 @@ export async function getStrictClassSubjectLevelQuestions(
   attemptedQuestionIds: string[],
   masterDatabase: QuizQuestion[]
 ): Promise<QuizQuestion[]> {
-  await new Promise(resolve => setTimeout(resolve, 80));
+  await new Promise(resolve => setTimeout(resolve, 60));
 
-  // 1. Strict filter: match classLevel, subject, and level
-  let candidates = masterDatabase.filter(
-    q => q.classLevel === classLevel &&
-         q.subject === subject &&
-         (q.level === level || (!q.level && level === 1)) &&
-         q.status === 'approved'
-  );
+  // Always obtain the canonical 10 verified questions for this exact (classLevel, subject, level)
+  const canonicalQs = getCurriculumQuestionsForLevel(classLevel, subject, level);
 
-  // If fewer than 10 found in master database, generate the canonical 10 questions for this level
-  if (candidates.length < 10) {
-    const canonicalQs = getCurriculumQuestionsForLevel(classLevel, subject, level);
-    for (const q of canonicalQs) {
-      if (!masterDatabase.some(m => m.id === q.id)) {
-        masterDatabase.push(q);
-      }
-      if (!candidates.some(c => c.id === q.id)) {
-        candidates.push(q);
-      }
+  // Sync canonical questions into masterDatabase if missing or outdated
+  for (const q of canonicalQs) {
+    const existingIdx = masterDatabase.findIndex(m => m.id === q.id);
+    if (existingIdx === -1) {
+      masterDatabase.push(q);
+    } else {
+      masterDatabase[existingIdx] = q;
     }
   }
 
-  // 2. Filter unattempted for zero-repetition experience
+  // Also include any custom admin-added questions strictly for this classLevel, subject, and level
+  const customAdminQs = masterDatabase.filter(
+    q =>
+      q.classLevel === classLevel &&
+      q.subject === subject &&
+      q.level === level &&
+      q.status === 'approved' &&
+      !canonicalQs.some(c => c.id === q.id)
+  );
+
+  const candidates = [...canonicalQs, ...customAdminQs];
+
+  // Prioritize unattempted questions within this level first
   const unattempted = candidates.filter(q => !attemptedQuestionIds.includes(q.id));
   if (unattempted.length >= 10) {
-    return randomizeQuizQuestions(unattempted.slice(0, 10), level === 4);
+    return unattempted.slice(0, 10);
   }
 
-  // 3. If student has already played these (re-taking the level for mastery),
-  // return all 10 questions for this level with randomized options
-  return randomizeQuizQuestions(candidates.slice(0, 10), level === 4);
+  // Return the 10 level-specific questions for this level
+  return canonicalQs.slice(0, 10);
 }
 
 // Administrator Analytics Helper

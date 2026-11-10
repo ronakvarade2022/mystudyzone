@@ -167,7 +167,7 @@ export async function launchRazorpayCheckout(options: {
     amount: orderData.amount, // in paise
     currency: 'INR',
     name: 'Champion Learning',
-    description: `${planTitle} (₹${planAmountRupees}) • 30 Days Access for ${student.name}`,
+    description: `${planTitle} (₹${planAmountRupees}) • 3 Months Access for ${student.name}`,
     image: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
     order_id: orderData.orderId,
     prefill: {
@@ -300,7 +300,7 @@ export const paymentGateway = {
       status: 'SUCCESS',
       createdAt: new Date().toISOString(),
       membershipStartDate: new Date().toISOString().split('T')[0],
-      membershipExpiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      membershipExpiryDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
     };
 
     return {

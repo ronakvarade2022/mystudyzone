@@ -34,10 +34,11 @@ import {
 } from 'lucide-react';
 import { QuizLevel, SubjectLevelProgress } from '../types';
 import { StudentMasteryChart } from './StudentMasteryChart';
+import { getStudentPlanInfo, canAccessSubject, canAccessFeature } from '../utils/subscriptionAccess';
 
 interface StudentDashboardProps {
   onNavigateTab: (tab: string, subjectParam?: SubjectName, levelParam?: QuizLevel) => void;
-  onOpenMembership: () => void;
+  onOpenMembership: (plan?: 'basic' | 'premium') => void;
 }
 
 const ALL_14_SUBJECTS: { name: SubjectName; icon: string; bgGradient: string }[] = [
@@ -154,124 +155,237 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       </div>
 
-      {/* SECTION 10: STUDENT MEMBERSHIP SECTION (Razorpay 30-Day Program) */}
+      {/* SECTION 10: ATTRACTIVE DASHBOARD SUBSCRIPTION BANNER & 3 PLANS OVERVIEW (Mobile, Tablet & Desktop) */}
       {(() => {
-        const now = new Date();
-        const expiry = currentStudent.planExpiresAt ? new Date(currentStudent.planExpiresAt) : null;
-        const isExpired = expiry ? expiry < now : (currentStudent.plan !== 'free');
-        const daysRemaining = expiry && expiry > now 
-          ? Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) 
-          : 0;
-
-        let statusLabel: 'ACTIVE' | 'EXPIRED' | 'PENDING PAYMENT' | 'PAYMENT FAILED' = 'ACTIVE';
-        if (currentStudent.plan === 'free') {
-          statusLabel = 'PENDING PAYMENT';
-        } else if (isExpired) {
-          statusLabel = 'EXPIRED';
-        } else {
-          statusLabel = 'ACTIVE';
-        }
-
-        const planName = currentStudent.plan === 'premium' 
-          ? 'Champion Premium' 
-          : currentStudent.plan === 'basic' 
-            ? 'Champion Basic' 
-            : 'Free Account';
-
-        const paymentAmount = currentStudent.plan === 'premium' ? '₹99' : currentStudent.plan === 'basic' ? '₹49' : '₹0';
+        const planInfo = getStudentPlanInfo(currentStudent);
+        const statusLabel = planInfo.statusLabel;
+        const planName = planInfo.planDisplayName;
+        const paymentAmount = planInfo.priceLabel;
 
         return (
-          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-amber-200/90 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center text-xl shrink-0">
-                  <Crown className="w-5 h-5 text-amber-600" />
+          <div className="bg-white rounded-3xl p-5 sm:p-6 border-2 border-amber-200/90 shadow-md space-y-5">
+            {/* Top Subscription Status Header */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 text-white flex items-center justify-center text-xl shrink-0 shadow-sm">
+                  <Crown className="w-6 h-6" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-base font-display font-extrabold text-slate-900">
-                      Champion Membership & Subscription
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-base sm:text-lg font-display font-extrabold text-slate-900">
+                      Active Subscription: <span className="text-amber-700">{planName}</span>
                     </h3>
-                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${
-                      statusLabel === 'ACTIVE' 
-                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
-                        : statusLabel === 'EXPIRED' 
-                          ? 'bg-rose-100 text-rose-800 border border-rose-300' 
-                          : 'bg-amber-100 text-amber-900 border border-amber-300'
-                    }`}>
-                      ● {statusLabel}
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${
+                        planInfo.isPaidPlanExpired
+                          ? 'bg-rose-100 text-rose-800 border-rose-300'
+                          : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                      }`}
+                    >
+                      ● {planInfo.isPaidPlanExpired ? 'EXPIRED • FREE PLAN ACTIVE' : `${statusLabel} (${planInfo.daysRemainingDisplay})`}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500 font-medium">
-                    Verified Razorpay 30-day educational subscription program
+                  <p className="text-xs text-slate-600 font-medium mt-1">
+                    {planInfo.isPaidPlanExpired
+                      ? `Your previous ${planInfo.expiredPlanName} has expired. You are currently on FREE PLAN – ₹0 – Lifetime. Renew below for 90 Days access!`
+                      : planInfo.effectivePlan === 'free'
+                      ? 'FREE PLAN – ₹0 – Lifetime active forever (Brain Puzzles, Sudoku, English & Maths). Upgrade to ₹49 (90 Days) or ₹99 (90 Days) anytime!'
+                      : planInfo.effectivePlan === 'basic'
+                      ? `STANDARD PLAN – ₹49 – 90 Days active • Validity: ${planInfo.daysRemainingDisplay} (Expires: ${planInfo.expiryDisplay})`
+                      : `PREMIUM PLAN – ₹99 – 90 Days active • Full Dashboard Unlocked • Validity: ${planInfo.daysRemainingDisplay} (Expires: ${planInfo.expiryDisplay})`}
                   </p>
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={onOpenMembership}
-                className="self-start sm:self-auto px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-extrabold text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
-              >
-                {currentStudent.plan === 'free' ? (
-                  <>
-                    <CreditCard className="w-3.5 h-3.5" />
-                    <span>Choose Plan (₹49 / ₹99)</span>
-                  </>
-                ) : currentStudent.plan === 'basic' ? (
-                  <>
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Upgrade to Premium (₹99)</span>
-                  </>
-                ) : (
-                  <>
+              <div className="flex flex-wrap items-center gap-2 self-start lg:self-center">
+                {planInfo.isPaidPlanExpired ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenMembership(planInfo.storedPlan === 'basic' ? 'basic' : 'premium')}
+                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-orange-600 hover:from-rose-700 hover:to-orange-700 text-white font-extrabold text-xs shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+                  >
                     <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Renew / Extend 30 Days</span>
+                    <span>Renew Subscription (90 Days)</span>
+                  </button>
+                ) : planInfo.effectivePlan === 'free' ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onOpenMembership('basic')}
+                      className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-xs transition-all cursor-pointer"
+                    >
+                      Upgrade ₹49 (90 Days)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onOpenMembership('premium')}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-extrabold text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Upgrade ₹99 (90 Days)</span>
+                    </button>
                   </>
+                ) : planInfo.effectivePlan === 'basic' ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenMembership('premium')}
+                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-extrabold text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Upgrade to ₹99 Premium (90 Days)</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onOpenMembership('premium')}
+                    className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 font-extrabold text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Extend 90-Day Validity</span>
+                  </button>
                 )}
-              </button>
+              </div>
             </div>
 
-            {/* 6 Key Subscription Fields as Required by Specification */}
+            {/* 6 Key Subscription Status Fields (Synchronized with Firebase) */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
               <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
-                <span className="font-bold text-slate-400 uppercase text-[10px] block">Current Plan</span>
-                <span className="font-extrabold text-sm text-slate-800 block mt-0.5">{planName}</span>
+                <span className="font-bold text-slate-400 uppercase text-[10px] block">Active Plan</span>
+                <span className="font-extrabold text-xs sm:text-sm text-slate-900 block mt-0.5">{planName}</span>
               </div>
 
               <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
-                <span className="font-bold text-slate-400 uppercase text-[10px] block">Membership Status</span>
-                <span className={`font-extrabold text-sm block mt-0.5 ${
-                  statusLabel === 'ACTIVE' ? 'text-emerald-700' : statusLabel === 'EXPIRED' ? 'text-rose-700' : 'text-amber-700'
-                }`}>
-                  {statusLabel}
+                <span className="font-bold text-slate-400 uppercase text-[10px] block">Subscription Status</span>
+                <span className={`font-extrabold text-xs sm:text-sm block mt-0.5 ${planInfo.isPaidPlanExpired ? 'text-rose-700' : 'text-emerald-700'}`}>
+                  {planInfo.isPaidPlanExpired ? 'EXPIRED (Free Active)' : planInfo.isLifetimeFree ? 'ACTIVE (Lifetime)' : 'ACTIVE (Verified)'}
                 </span>
               </div>
 
               <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
-                <span className="font-bold text-slate-400 uppercase text-[10px] block">Payment Amount</span>
-                <span className="font-extrabold text-sm text-slate-900 block mt-0.5">{paymentAmount} INR</span>
+                <span className="font-bold text-slate-400 uppercase text-[10px] block">Plan Price</span>
+                <span className="font-extrabold text-xs sm:text-sm text-slate-900 block mt-0.5">{paymentAmount}</span>
               </div>
 
               <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
                 <span className="font-bold text-slate-400 uppercase text-[10px] block">Activation Date</span>
                 <span className="font-bold text-xs text-slate-700 block mt-0.5">
-                  {currentStudent.planPurchasedAt || 'Not Activated'}
+                  {currentStudent.planPurchasedAt || (currentStudent.registeredAt ? currentStudent.registeredAt.split('T')[0] : 'Active')}
                 </span>
               </div>
 
               <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
                 <span className="font-bold text-slate-400 uppercase text-[10px] block">Expiry Date</span>
-                <span className="font-bold text-xs text-slate-700 block mt-0.5">
-                  {currentStudent.planExpiresAt || 'Not Scheduled'}
+                <span className="font-bold text-xs text-emerald-700 block mt-0.5">
+                  {planInfo.expiryDisplay}
                 </span>
               </div>
 
               <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
-                <span className="font-bold text-slate-400 uppercase text-[10px] block">Days Remaining</span>
-                <span className="font-extrabold text-sm text-amber-900 block mt-0.5">
-                  {daysRemaining > 0 ? `${daysRemaining} Days` : '0 Days'}
+                <span className="font-bold text-slate-400 uppercase text-[10px] block">Remaining Validity</span>
+                <span className="font-extrabold text-xs sm:text-sm text-amber-900 block mt-0.5">
+                  {planInfo.daysRemainingDisplay}
                 </span>
+              </div>
+            </div>
+
+            {/* 3 Subscription Plans Cards (Visible on Mobile, Tablet & Desktop) */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 pt-1">
+              {/* 1. FREE PLAN – ₹0 – Lifetime */}
+              <div
+                className={`p-4 rounded-2xl border-2 flex flex-col justify-between transition-all ${
+                  planInfo.effectivePlan === 'free'
+                    ? 'border-emerald-500 bg-emerald-50/40'
+                    : 'border-slate-200 bg-slate-50/70'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                      FREE PLAN – ₹0 – Lifetime
+                    </span>
+                    <span className="text-[11px] font-extrabold text-emerald-700">Lifetime</span>
+                  </div>
+                  <p className="text-lg font-black text-slate-900">
+                    ₹0 <span className="text-xs font-bold text-emerald-700">• Lifetime Validity</span>
+                  </p>
+                  <p className="text-[11px] text-slate-600 font-medium mt-1">
+                    Brain Puzzles, Sudoku (4×4, 6×6, 9×9), English &amp; Mathematics Quizzes.
+                  </p>
+                </div>
+                <div className="mt-3 pt-2 border-t border-emerald-200/60 flex items-center justify-between text-[11px] font-extrabold text-emerald-800">
+                  <span>{planInfo.effectivePlan === 'free' ? '✓ Active Plan (Never Expires)' : '✓ Included Forever'}</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                </div>
+              </div>
+
+              {/* 2. STANDARD PLAN – ₹49 – 90 Days */}
+              <div
+                onClick={() => onOpenMembership('basic')}
+                className={`p-4 rounded-2xl border-2 flex flex-col justify-between transition-all cursor-pointer ${
+                  planInfo.effectivePlan === 'basic'
+                    ? 'border-indigo-600 bg-indigo-50/50 shadow-sm'
+                    : 'border-indigo-200 hover:border-indigo-400 bg-indigo-50/20'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-indigo-600 text-white">
+                      STANDARD PLAN – ₹49 – 90 Days
+                    </span>
+                    <span className="text-[11px] font-extrabold text-indigo-700">90 Days</span>
+                  </div>
+                  <p className="text-lg font-black text-indigo-900">
+                    ₹49 <span className="text-xs font-bold text-indigo-700">• 90 Days (3 Months)</span>
+                  </p>
+                  <p className="text-[11px] text-slate-600 font-medium mt-1">
+                    Free Plan + All 14 School Subjects, Shivaji Stories, Story World &amp; Drawing Studio.
+                  </p>
+                </div>
+                <div className="mt-3 pt-2 border-t border-indigo-200/60 flex items-center justify-between text-[11px] font-extrabold text-indigo-700">
+                  <span>
+                    {planInfo.effectivePlan === 'basic'
+                      ? `✓ Active (${planInfo.daysRemainingDisplay})`
+                      : planInfo.isPaidPlanExpired && planInfo.storedPlan === 'basic'
+                      ? 'Renew Standard Plan (₹49 – 90 Days)'
+                      : 'Choose ₹49 Plan (90 Days)'}
+                  </span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </div>
+              </div>
+
+              {/* 3. PREMIUM PLAN – ₹99 – 90 Days */}
+              <div
+                onClick={() => onOpenMembership('premium')}
+                className={`p-4 rounded-2xl border-2 flex flex-col justify-between transition-all cursor-pointer ${
+                  planInfo.effectivePlan === 'premium'
+                    ? 'border-amber-500 bg-gradient-to-br from-amber-50 to-orange-50/70 shadow-md'
+                    : 'border-amber-300 hover:border-amber-500 bg-gradient-to-br from-amber-50/60 to-orange-50/40'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-600 text-white">
+                      PREMIUM PLAN – ₹99 – 90 Days
+                    </span>
+                    <span className="text-[11px] font-extrabold text-amber-800">90 Days</span>
+                  </div>
+                  <p className="text-lg font-black text-amber-900">
+                    ₹99 <span className="text-xs font-bold text-amber-800">• 90 Days (3 Months)</span>
+                  </p>
+                  <p className="text-[11px] text-slate-700 font-medium mt-1">
+                    Full Dashboard Unlock: Cricket, Scholarship (4th &amp; 7th), AI Academy, Certificates &amp; All 14 Subjects.
+                  </p>
+                </div>
+                <div className="mt-3 pt-2 border-t border-amber-200/80 flex items-center justify-between text-[11px] font-extrabold text-amber-900">
+                  <span>
+                    {planInfo.effectivePlan === 'premium'
+                      ? `✓ Active (${planInfo.daysRemainingDisplay})`
+                      : planInfo.isPaidPlanExpired
+                      ? 'Renew Premium Plan (₹99 – 90 Days)'
+                      : 'Unlock Everything (₹99 – 90 Days)'}
+                  </span>
+                  <ArrowRight className="w-3.5 h-3.5 text-orange-600" />
+                </div>
               </div>
             </div>
           </div>
@@ -326,37 +440,140 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         {/* Plan Status */}
         <div 
-          onClick={onOpenMembership}
+          onClick={() => onOpenMembership()}
           className="col-span-2 lg:col-span-1 bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-4 border border-amber-300 shadow-xs flex items-center gap-3 cursor-pointer hover:border-amber-400 transition-colors"
         >
           <div className="w-12 h-12 rounded-xl bg-amber-500 text-white flex items-center justify-center text-xl shrink-0">
             👑
           </div>
           <div className="min-w-0">
-            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Membership</p>
-            <p className="text-base sm:text-lg font-extrabold text-amber-900 truncate">
-              {currentStudent.plan === 'premium' ? 'Premium VIP' : currentStudent.plan === 'basic' ? 'Basic Active' : 'Free Trial (Upgrade)'}
+            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Active Plan</p>
+            <p className="text-xs sm:text-sm font-extrabold text-amber-900 truncate">
+              {getStudentPlanInfo(currentStudent).planDisplayName}
+            </p>
+            <p className="text-[10px] font-bold text-emerald-700 truncate">
+              {getStudentPlanInfo(currentStudent).daysRemainingDisplay}
             </p>
           </div>
         </div>
       </div>
 
       {/* ========================================================
-          CATEGORY A: ACADEMIC LEARNING ZONE (Curriculum & 4 Levels)
+          CATEGORY A: ACADEMIC LEARNING ZONE (14 Subjects × 4 Levels = 560 Unique Questions)
           ======================================================== */}
       <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <span className="w-8 h-8 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center text-sm shadow-xs">
-            A
-          </span>
-          <div>
-            <h2 className="text-xl sm:text-2xl font-display font-extrabold text-slate-900">
-              ACADEMIC LEARNING ZONE
-            </h2>
-            <p className="text-xs sm:text-sm text-slate-500 font-medium">
-              14 Curriculum Subjects • 4 Difficulty Levels • Zero Question Duplication Guarantee
-            </p>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="w-8 h-8 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
+              A
+            </span>
+            <div>
+              <h2 className="text-xl sm:text-2xl font-display font-extrabold text-slate-900">
+                ACADEMIC LEARNING ZONE (14 Subjects)
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-500 font-medium">
+                40 Unique Questions Per Subject (10 per Level × 4 Levels) • Zero Question Repetition Guarantee
+              </p>
+            </div>
           </div>
+
+          <button
+            onClick={() => onNavigateTab('quizzes')}
+            className="text-xs font-extrabold text-amber-700 hover:text-amber-900 bg-amber-100/80 px-3.5 py-2 rounded-xl border border-amber-200 flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
+          >
+            <span>Open Full Quiz Arena</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* 14 Subjects Grid with Visible 4-Level Indicators & Plan Lock Badges */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
+          {ALL_14_SUBJECTS.map((sub) => {
+            const subjectProgress = getSubjectLevelProgress(sub.name);
+            const subjectAttempts = studentAttempts.filter(a => a.subject === sub.name);
+            const bestScore = subjectAttempts.length > 0 
+              ? Math.max(...subjectAttempts.map(a => a.correctCount)) 
+              : 0;
+
+            const maxUnlocked = subjectProgress.maxUnlockedLevel;
+            const subjAccess = canAccessSubject(currentStudent, sub.name);
+            const isSubLocked = !subjAccess.allowed;
+
+            return (
+              <div
+                key={sub.name}
+                onClick={() => {
+                  if (isSubLocked) {
+                    onNavigateTab('quizzes', sub.name, 1);
+                  } else {
+                    setSelectedSubjectForLevels(sub.name);
+                  }
+                }}
+                className={`group rounded-2xl p-3.5 border shadow-xs transition-all cursor-pointer flex flex-col justify-between ${
+                  isSubLocked
+                    ? 'bg-slate-50/90 border-slate-200 hover:border-indigo-400'
+                    : 'bg-white border-amber-200/80 hover:shadow-md hover:border-amber-400'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${sub.bgGradient} flex items-center justify-center text-lg text-white shadow-xs group-hover:scale-105 transition-transform`}>
+                      {sub.icon}
+                    </div>
+                    {isSubLocked ? (
+                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200 flex items-center gap-0.5">
+                        <Lock className="w-2.5 h-2.5" /> ₹49
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        Unlocked
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="font-bold text-xs text-slate-800 leading-tight mb-1.5 truncate">
+                    {sub.name}
+                  </h3>
+                  
+                  {/* Level 1-4 Mini Progress Indicators */}
+                  <div className="flex items-center gap-1 mb-2">
+                    {([1, 2, 3, 4] as QuizLevel[]).map(lvl => {
+                      const isCompleted = subjectProgress.completedLevels.includes(lvl);
+                      const isUnlocked = !isSubLocked && lvl <= maxUnlocked;
+                      return (
+                        <span 
+                          key={lvl} 
+                          title={`Level ${lvl}: ${isSubLocked ? 'Requires ₹49 Plan' : isCompleted ? 'Passed' : isUnlocked ? 'Unlocked' : 'Locked'}`}
+                          className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ${
+                            isCompleted 
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                              : isUnlocked 
+                                ? 'bg-blue-100 text-blue-800 border border-blue-300' 
+                                : 'bg-slate-100 text-slate-400 border border-slate-200'
+                          }`}
+                        >
+                          L{lvl}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] font-bold text-amber-700">
+                  {isSubLocked ? (
+                    <>
+                      <span className="text-indigo-700">Unlock (₹49)</span>
+                      <Lock className="w-3 h-3 text-indigo-600" />
+                    </>
+                  ) : (
+                    <>
+                      <span>{subjectAttempts.length > 0 ? `${bestScore}/10 Best` : '4 Levels'}</span>
+                      <Play className="w-3 h-3 fill-amber-700 group-hover:translate-x-0.5 transition-transform" />
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -388,9 +605,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-3xl mb-4 group-hover:scale-110 transition-transform">
               🏏
             </div>
-            <span className="text-xs font-extrabold uppercase bg-white/20 px-3 py-1 rounded-full">
-              Daily Cricket Quiz • 4 Levels
-            </span>
+            <div className="flex items-center gap-2">
+              {!canAccessFeature(currentStudent, 'cricket').allowed ? (
+                <span className="text-xs font-extrabold uppercase bg-amber-400 text-slate-950 px-3 py-1 rounded-full flex items-center gap-1 shadow-xs">
+                  <Lock className="w-3.5 h-3.5" /> ₹99 Premium Plan
+                </span>
+              ) : (
+                <span className="text-xs font-extrabold uppercase bg-white/20 px-3 py-1 rounded-full">
+                  ✓ Unlocked • 4 Levels
+                </span>
+              )}
+            </div>
           </div>
           <h2 className="text-2xl font-display font-extrabold tracking-tight mb-2">
             CRICKET CHAMPIONS
@@ -399,7 +624,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             Daily cricket current affairs, IPL updates, World Cup legends, match records, player statistics, and terminology across 4 difficulty levels.
           </p>
           <div className="flex items-center text-xs font-bold tracking-wide uppercase text-white gap-2 group-hover:gap-3 transition-all">
-            <span>Play Today's Cricket Quiz</span>
+            <span>{canAccessFeature(currentStudent, 'cricket').allowed ? "Play Today's Cricket Quiz" : 'Click to Unlock with ₹99 Plan'}</span>
             <ArrowRight className="w-4 h-4" />
           </div>
         </div>
@@ -413,9 +638,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-3xl mb-4 group-hover:scale-110 transition-transform">
               🏆
             </div>
-            <span className="text-xs font-extrabold uppercase bg-white/20 px-3 py-1 rounded-full">
-              Std 4th & Std 7th • 7 Languages
-            </span>
+            <div className="flex items-center gap-2">
+              {!canAccessFeature(currentStudent, 'scholarship').allowed ? (
+                <span className="text-xs font-extrabold uppercase bg-slate-950/80 text-amber-300 px-3 py-1 rounded-full flex items-center gap-1">
+                  <Lock className="w-3.5 h-3.5" /> ₹99 Premium Plan
+                </span>
+              ) : (
+                <span className="text-xs font-extrabold uppercase bg-white/20 px-3 py-1 rounded-full">
+                  ✓ Unlocked • Std 4th & 7th
+                </span>
+              )}
+            </div>
           </div>
           <h2 className="text-2xl font-display font-extrabold tracking-tight mb-2">
             MAHARASHTRA SCHOLARSHIP
@@ -424,7 +657,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             Official MSCE Scholarship examination practice: 10 tests for Std 4th & 10 tests for Std 7th, full 90m mock papers, and 7 official languages.
           </p>
           <div className="flex items-center text-xs font-bold tracking-wide uppercase text-white gap-2 group-hover:gap-3 transition-all">
-            <span>Start Scholarship Practice</span>
+            <span>{canAccessFeature(currentStudent, 'scholarship').allowed ? 'Start Scholarship Practice' : 'Click to Unlock with ₹99 Plan'}</span>
             <ArrowRight className="w-4 h-4" />
           </div>
         </div>
@@ -456,107 +689,124 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       >
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2 max-w-2xl">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-3xl">👑</span>
+              {!canAccessFeature(currentStudent, 'shivaji').allowed ? (
+                <span className="text-xs font-extrabold uppercase bg-slate-950/80 px-3 py-1 rounded-full text-amber-300 border border-amber-400/40 flex items-center gap-1">
+                  <Lock className="w-3.5 h-3.5" /> Unlocked in ₹49 Standard & ₹99 Premium
+                </span>
+              ) : (
+                <span className="text-xs font-extrabold uppercase bg-emerald-500/30 px-3 py-1 rounded-full text-white border border-white/30">
+                  ✓ Unlocked • 50 Stories
+                </span>
+              )}
               <span className="text-xs font-extrabold uppercase bg-black/25 px-3 py-1 rounded-full text-amber-200 border border-white/20">
-                50 Chronological Chapters • Marathi, Hindi & English
+                Natural Female Marathi & English Voice
               </span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-display font-extrabold tracking-tight">
               छत्रपती शिवाजी महाराज: ५० ऐतिहासिक अमृतकथा
             </h2>
             <p className="text-amber-100 text-xs sm:text-sm leading-relaxed font-medium">
-              From birth at Shivneri Fort (1630) to the Grand Coronation at Raigad (1674). Experience the thrilling journey of Hindavi Swarajya with paragraph-by-paragraph audio player, moral lessons, and historical insights!
+              From birth at Shivneri Fort (1630) to the Grand Coronation at Raigad (1674). Experience the thrilling journey of Hindavi Swarajya with continuous full-story Female Marathi voice narration, moral lessons, and historical insights!
             </p>
           </div>
 
           <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider bg-white text-amber-950 px-5 py-3 rounded-2xl shadow-md group-hover:scale-105 transition-all self-start md:self-auto">
-            <span>Listen & Read 50 Stories</span>
+            <span>{canAccessFeature(currentStudent, 'shivaji').allowed ? 'Listen & Read 50 Stories' : 'Unlock Shivaji Stories (₹49)'}</span>
             <ArrowRight className="w-4 h-4 text-orange-600" />
           </div>
         </div>
       </div>
 
-      {/* SUDOKU MASTER & PUZZLE CHAMPIONS ROW */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* SUDOKU MASTER CARD */}
+      {/* SUDOKU MASTER, PUZZLE CHAMPIONS & DRAWING STUDIO ROW */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* SUDOKU MASTER CARD (FREE FOREVER) */}
         <div 
           onClick={() => onNavigateTab('sudoku')}
-          className="group relative overflow-hidden rounded-3xl bg-gradient-to-br from-amber-500 via-orange-500 to-amber-600 text-white p-7 shadow-md hover:shadow-xl transition-all cursor-pointer"
+          className="group relative overflow-hidden rounded-3xl bg-gradient-to-br from-amber-500 via-orange-500 to-amber-600 text-white p-6 shadow-md hover:shadow-xl transition-all cursor-pointer flex flex-col justify-between"
         >
-          <div className="flex items-start justify-between">
-            <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-3xl mb-4 group-hover:scale-110 transition-transform">
-              🧩
+          <div>
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition-transform">
+                🧩
+              </div>
+              <span className="text-[11px] font-extrabold uppercase bg-white/25 px-2.5 py-1 rounded-full">
+                ✓ Free Forever • 4×4, 6×6 & 9×9
+              </span>
             </div>
-            <span className="text-xs font-extrabold uppercase bg-white/20 px-3 py-1 rounded-full">
-              4x4, 6x6 & 9x9 Grids
-            </span>
+            <h2 className="text-xl font-display font-extrabold tracking-tight mb-2">
+              CHAMPION SUDOKU
+            </h2>
+            <p className="text-amber-100 text-xs sm:text-sm leading-relaxed mb-5 font-medium">
+              Verified puzzles across Easy, Medium & Hard with live row, column, and box duplicate checking, pencil notes, and hints.
+            </p>
           </div>
-          <h2 className="text-2xl font-display font-extrabold tracking-tight mb-2">
-            CHAMPION SUDOKU MASTER
-          </h2>
-          <p className="text-amber-100 text-sm leading-relaxed mb-6 font-medium">
-            Boost mathematical logic and focus! Play 4x4 Mini (Class 2-4), 6x6 Junior (Class 4-6), or 9x9 Classic (Class 6-8) with pencil notes, hints, erase, and timer.
-          </p>
           <div className="flex items-center text-xs font-bold tracking-wide uppercase text-white gap-2 group-hover:gap-3 transition-all">
             <span>Play Interactive Sudoku</span>
             <ArrowRight className="w-4 h-4" />
           </div>
         </div>
 
-        {/* PUZZLE CHAMPIONS CARD */}
+        {/* PUZZLE CHAMPIONS CARD (FREE FOREVER) */}
         <div 
           onClick={() => onNavigateTab('puzzles')}
-          className="group relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 text-white p-7 shadow-md hover:shadow-xl transition-all cursor-pointer"
+          className="group relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 text-white p-6 shadow-md hover:shadow-xl transition-all cursor-pointer flex flex-col justify-between"
         >
-          <div className="flex items-start justify-between">
-            <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-3xl mb-4 group-hover:scale-110 transition-transform">
-              💡
+          <div>
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition-transform">
+                💡
+              </div>
+              <span className="text-[11px] font-extrabold uppercase bg-white/25 px-2.5 py-1 rounded-full">
+                ✓ Free Forever • 52+ Puzzles
+              </span>
             </div>
-            <span className="text-xs font-extrabold uppercase bg-white/20 px-3 py-1 rounded-full">
-              52+ Puzzles • 8 Categories
-            </span>
+            <h2 className="text-xl font-display font-extrabold tracking-tight mb-2">
+              BRAIN PUZZLES ARENA
+            </h2>
+            <p className="text-indigo-100 text-xs sm:text-sm leading-relaxed mb-5 font-medium">
+              Solve logic riddles, clock geometry, prime numbers, sequences, word anagrams, and memory match cards with explanations.
+            </p>
           </div>
-          <h2 className="text-2xl font-display font-extrabold tracking-tight mb-2">
-            BRAIN PUZZLES ARENA
-          </h2>
-          <p className="text-indigo-100 text-sm leading-relaxed mb-6 font-medium">
-            Solve logic riddles, clock face geometry, prime numbers, sequences, word anagrams, and memory match cards with hints and explanations.
-          </p>
           <div className="flex items-center text-xs font-bold tracking-wide uppercase text-white gap-2 group-hover:gap-3 transition-all">
             <span>Enter Puzzle Arena</span>
             <ArrowRight className="w-4 h-4" />
           </div>
         </div>
-      </div>
 
-      {/* DRAWING CHAMPIONS CARD ROW */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* DRAWING CHAMPIONS CARD */}
+        {/* DRAWING CHAMPIONS CARD (STANDARD ₹49 & PREMIUM ₹99) */}
         <div 
           onClick={() => onNavigateTab('drawing')}
-          className="group relative overflow-hidden rounded-3xl bg-gradient-to-br from-rose-500 via-pink-500 to-amber-500 text-white p-7 shadow-md hover:shadow-xl transition-all cursor-pointer"
+          className="group relative overflow-hidden rounded-3xl bg-gradient-to-br from-rose-500 via-pink-500 to-amber-500 text-white p-6 shadow-md hover:shadow-xl transition-all cursor-pointer flex flex-col justify-between"
         >
-          <div className="flex items-start justify-between">
-            <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-3xl mb-4 group-hover:scale-110 transition-transform">
-              🎨
+          <div>
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition-transform">
+                🎨
+              </div>
+              {!canAccessFeature(currentStudent, 'drawing').allowed ? (
+                <span className="text-[11px] font-extrabold uppercase bg-slate-950/80 text-amber-300 px-2.5 py-1 rounded-full flex items-center gap-1">
+                  <Lock className="w-3 h-3" /> ₹49 Standard Plan
+                </span>
+              ) : (
+                <span className="text-[11px] font-extrabold uppercase bg-white/25 px-2.5 py-1 rounded-full">
+                  ✓ Unlocked • {drawingsCount} Saved
+                </span>
+              )}
             </div>
-            <span className="text-xs font-extrabold uppercase bg-white/20 px-3 py-1 rounded-full">
-              {drawingsCount} Saved in Gallery
-            </span>
+            <h2 className="text-xl font-display font-extrabold tracking-tight mb-2">
+              DRAWING CHAMPIONS
+            </h2>
+            <p className="text-rose-100 text-xs sm:text-sm leading-relaxed mb-5 font-medium">
+              Create, colour, and showcase your creativity! Digital canvas with pencil, brush, paint bucket, and coloring templates.
+            </p>
           </div>
-          <h2 className="text-2xl font-display font-extrabold tracking-tight mb-2">
-            DRAWING CHAMPIONS
-          </h2>
-          <p className="text-rose-100 text-sm leading-relaxed mb-6 font-medium">
-            Create, colour, and showcase your creativity! Interactive digital canvas with pencil, brush, paint bucket, 13 child-friendly topics, and coloring templates.
-          </p>
           <div className="flex items-center text-xs font-bold tracking-wide uppercase text-white gap-2 group-hover:gap-3 transition-all">
-            <span>Open Drawing Studio</span>
+            <span>{canAccessFeature(currentStudent, 'drawing').allowed ? 'Open Drawing Studio' : 'Unlock Drawing Studio (₹49)'}</span>
             <ArrowRight className="w-4 h-4" />
           </div>
         </div>
-
       </div>
 
       {/* ========================================================
@@ -653,7 +903,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               STUDENT ACCOUNT & MASTERY ZONE
             </h2>
             <p className="text-xs sm:text-sm text-slate-500 font-medium">
-              30-Day Performance Graph • 14 Subjects • Stories • Badges • Profile & Fee Management
+              30-Day Performance Graph • 45 Stories • Badges • Profile & Account Settings
             </p>
           </div>
         </div>
@@ -666,90 +916,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         onSelectSubject={(subj) => onNavigateTab('quizzes', subj, 1)}
       />
 
-      {/* 14 SUBJECT QUIZZES SECTION (Section 4) */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl sm:text-2xl font-display font-bold text-slate-800">
-              14 Subject Quizzes ({currentStudent.classLevel})
-            </h2>
-            <p className="text-xs sm:text-sm text-slate-500 font-medium">
-              Every quiz has strictly 10 questions, countdown timer, and guaranteed ZERO repeated questions!
-            </p>
-          </div>
-          <button
-            onClick={() => onNavigateTab('quizzes')}
-            className="text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center gap-1 cursor-pointer"
-          >
-            <span>View All</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        {/* 14 Subjects Grid with Visible 4-Level Indicators */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
-          {ALL_14_SUBJECTS.map((sub) => {
-            const subjectProgress = getSubjectLevelProgress(sub.name);
-            const subjectAttempts = studentAttempts.filter(a => a.subject === sub.name);
-            const bestScore = subjectAttempts.length > 0 
-              ? Math.max(...subjectAttempts.map(a => a.correctCount)) 
-              : 0;
-
-            const maxUnlocked = subjectProgress.maxUnlockedLevel;
-
-            return (
-              <div
-                key={sub.name}
-                onClick={() => setSelectedSubjectForLevels(sub.name)}
-                className="group bg-white rounded-2xl p-3.5 border border-amber-200/80 shadow-xs hover:shadow-md hover:border-amber-400 transition-all cursor-pointer flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${sub.bgGradient} flex items-center justify-center text-lg text-white shadow-xs group-hover:scale-105 transition-transform`}>
-                      {sub.icon}
-                    </div>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
-                      4 Levels
-                    </span>
-                  </div>
-                  <h3 className="font-bold text-xs text-slate-800 leading-tight mb-1.5 truncate">
-                    {sub.name}
-                  </h3>
-                  
-                  {/* Level 1-4 Mini Progress Indicators */}
-                  <div className="flex items-center gap-1 mb-2">
-                    {([1, 2, 3, 4] as QuizLevel[]).map(lvl => {
-                      const isCompleted = subjectProgress.completedLevels.includes(lvl);
-                      const isUnlocked = lvl <= maxUnlocked;
-                      return (
-                        <span 
-                          key={lvl} 
-                          title={`Level ${lvl}: ${isCompleted ? 'Passed' : isUnlocked ? 'Unlocked' : 'Locked'}`}
-                          className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ${
-                            isCompleted 
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
-                              : isUnlocked 
-                                ? 'bg-blue-100 text-blue-800 border border-blue-300' 
-                                : 'bg-slate-100 text-slate-400 border border-slate-200'
-                          }`}
-                        >
-                          L{lvl}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] font-bold text-amber-700">
-                  <span>{subjectAttempts.length > 0 ? `${bestScore}/10 Best` : 'Select Level'}</span>
-                  <Play className="w-3 h-3 fill-amber-700 group-hover:translate-x-0.5 transition-transform" />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
       {/* STORY WORLD HIGHLIGHT (Section 7) */}
       <div className="bg-gradient-to-br from-amber-50 to-orange-50/60 rounded-3xl p-6 sm:p-8 border border-amber-200">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -761,7 +927,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </h2>
             </div>
             <p className="text-xs sm:text-sm text-slate-600 font-medium">
-              15 English • 15 Hindi • 15 Marathi stories with natural voice narration, vocabulary & comprehension questions.
+              15 English • 15 Hindi • 15 Marathi stories with continuous natural voice narration, vocabulary & comprehension questions.
             </p>
           </div>
 
@@ -799,7 +965,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </div>
 
               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-amber-700">
-                <span>{currentStudent.completedStoryIds.includes(story.id) ? 'Completed ✅' : 'Listen with Audio 🎧'}</span>
+                <span>{currentStudent.completedStoryIds.includes(story.id) ? 'Completed ✅' : 'Listen Full Audio 🎧'}</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </div>
             </div>
@@ -852,16 +1018,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             {currentStudent.avatar || '🦁'}
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-lg font-display font-extrabold text-slate-900 group-hover:text-amber-800 transition-colors">
                 {currentStudent.name}'s Profile & Settings
               </h3>
               <span className="bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full text-xs font-bold">
                 {currentStudent.classLevel}
               </span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                currentStudent.isPhoneVerified
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : 'bg-slate-100 text-slate-600 border-slate-200'
+              }`}>
+                {currentStudent.isPhoneVerified ? 'Phone OTP Verified' : 'Phone Registered (Not OTP-Verified)'}
+              </span>
             </div>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Verified Mobile: +91 {currentStudent.mobile.slice(-10)} • Verified Email: {currentStudent.email}
+              Mobile: +91 {currentStudent.mobile.slice(-10)} • Email: {currentStudent.email}
             </p>
           </div>
         </div>
@@ -882,34 +1055,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           { 
             level: 1, 
             title: 'Level 1 – Easy', 
-            subtitle: 'Foundations & Core Basics',
+            subtitle: 'Basic Foundation',
             difficulty: 'Easy', 
             diffBadge: 'bg-emerald-100 text-emerald-800 border-emerald-300',
-            description: 'Core concepts, foundational vocabulary, and direct answers tailored to your class.'
+            description: '10 unique foundational questions covering core concepts, vocabulary, and direct recall.'
           },
           { 
             level: 2, 
-            title: 'Level 2 – Medium', 
-            subtitle: 'Concept Application & Multi-Step',
-            difficulty: 'Medium', 
+            title: 'Level 2 – Moderate', 
+            subtitle: 'Concept Application',
+            difficulty: 'Moderate', 
             diffBadge: 'bg-blue-100 text-blue-800 border-blue-300',
-            description: 'Apply concepts to solve multi-step problems, fill-in-blanks, and match items.'
+            description: '10 completely different questions applying concepts to multi-step problems and matching.'
           },
           { 
             level: 3, 
-            title: 'Level 3 – Hard', 
-            subtitle: 'Analytical Thinking & Reasoning',
-            difficulty: 'Hard', 
+            title: 'Level 3 – Difficult', 
+            subtitle: 'Analytical Thinking',
+            difficulty: 'Difficult', 
             diffBadge: 'bg-amber-100 text-amber-800 border-amber-300',
-            description: 'Complex word problems, finding incorrect statements, and deeper critical analysis.'
+            description: '10 completely different analytical questions, word problems, and spotting incorrect statements.'
           },
           { 
             level: 4, 
-            title: 'Level 4 – Expert', 
-            subtitle: 'Mastery & Advanced Challenge',
-            difficulty: 'Expert', 
+            title: 'Level 4 – Advanced', 
+            subtitle: 'Higher-Order Mastery',
+            difficulty: 'Advanced', 
             diffBadge: 'bg-purple-100 text-purple-800 border-purple-300',
-            description: 'Highest mastery challenge: synthesis, diagram reasoning, and trickier distinctions.'
+            description: '10 completely different higher-order & tricky mastery questions with option shuffling.'
           }
         ];
 

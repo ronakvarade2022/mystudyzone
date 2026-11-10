@@ -10,12 +10,14 @@ import {
   signInWithEmailAndPassword,
   sendEmailVerification,
   sendPasswordResetEmail,
+  verifyPasswordResetCode,
+  confirmPasswordReset,
   reload,
   User,
   signOut,
   onAuthStateChanged
 } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer, setDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, getDocFromServer, setDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { StudentProfile } from '../types';
 
@@ -389,28 +391,169 @@ export async function loginFirebaseEmailUser(
   }
 }
 
-// 7. Genuine Password Reset Email
+// 7. Genuine Password Reset Email & Link Verification via Firebase Authentication
 export async function sendFirebasePasswordReset(
-  email: string
+  email: string,
+  options?: { ensureRegisteredInFirebase?: boolean }
 ): Promise<{ success: boolean; message?: string; error?: string }> {
+  const cleanEmail = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return {
+      success: false,
+      error: 'Please enter a valid email address (for example, student@example.com).',
+    };
+  }
+
   try {
-    const cleanEmail = email.trim().toLowerCase();
-    await sendPasswordResetEmail(auth, cleanEmail);
-    return { 
-      success: true, 
-      message: `Password reset instructions have been sent to ${cleanEmail}. Please check your inbox and click the link to choose a new password.` 
+    const continueUrl =
+      typeof window !== 'undefined'
+        ? `${window.location.origin}/?email=${encodeURIComponent(cleanEmail)}`
+        : undefined;
+
+    try {
+      if (continueUrl) {
+        await sendPasswordResetEmail(auth, cleanEmail, {
+          url: continueUrl,
+          handleCodeInApp: false,
+        });
+      } else {
+        await sendPasswordResetEmail(auth, cleanEmail);
+      }
+    } catch (innerErr: any) {
+      // If continueUrl domain is not yet whitelisted in Firebase Console, fall back to standard sendPasswordResetEmail
+      if (
+        innerErr?.code === 'auth/unauthorized-continue-uri' ||
+        innerErr?.code === 'auth/invalid-continue-uri' ||
+        innerErr?.code === 'auth/missing-continue-uri'
+      ) {
+        await sendPasswordResetEmail(auth, cleanEmail);
+      } else if (
+        innerErr?.code === 'auth/user-not-found' &&
+        options?.ensureRegisteredInFirebase
+      ) {
+        // If a pre-seeded existing platform account was not yet synced to Firebase Auth, sync it once and send the Firebase reset email
+        const tempPass = `VcTemp#${Date.now().toString(36)}!9`;
+        await createUserWithEmailAndPassword(auth, cleanEmail, tempPass);
+        await signOut(auth).catch(() => {});
+        await sendPasswordResetEmail(auth, cleanEmail);
+      } else {
+        throw innerErr;
+      }
+    }
+
+    return {
+      success: true,
+      message: `A secure password reset link has been sent via Firebase Authentication to ${cleanEmail}. Please open your email and click the reset link to set a new password.`,
     };
   } catch (error: any) {
     console.warn('Firebase password reset notice:', error?.code || error?.message);
-    let message = 'Failed to send password reset email.';
+    let message = 'Unable to send password reset email right now. Please try again.';
     if (error?.code === 'auth/user-not-found') {
-      message = 'No account was found with this email address. Please check spelling or register.';
+      message = 'No registered account was found with this email address. Please check the email and try again.';
     } else if (error?.code === 'auth/invalid-email') {
-      message = 'Invalid email address format.';
+      message = 'Please enter a valid email address.';
+    } else if (error?.code === 'auth/too-many-requests') {
+      message = 'Too many password reset requests. Please wait a moment before requesting another reset link.';
     } else if (error?.message) {
       message = error.message;
     }
     return { success: false, error: message };
+  }
+}
+
+// 7b. Verify Firebase Password Reset Code (when user clicks the Firebase email reset link)
+export async function verifyFirebasePasswordResetCode(
+  oobCode: string
+): Promise<{ valid: boolean; email?: string; expired?: boolean; error?: string }> {
+  const cleanCode = oobCode.trim();
+  if (!cleanCode) {
+    return {
+      valid: false,
+      expired: false,
+      error: 'Invalid password reset link. Please request a new password reset link.',
+    };
+  }
+
+  try {
+    const email = await verifyPasswordResetCode(auth, cleanCode);
+    return {
+      valid: true,
+      email: email.trim().toLowerCase(),
+    };
+  } catch (error: any) {
+    console.warn('Firebase verifyPasswordResetCode error:', error?.code || error?.message);
+    if (error?.code === 'auth/expired-action-code') {
+      return {
+        valid: false,
+        expired: true,
+        error: 'This password reset link has expired. Please request a new reset link below.',
+      };
+    }
+    if (error?.code === 'auth/invalid-action-code') {
+      return {
+        valid: false,
+        expired: true,
+        error: 'This password reset link is invalid or has already been used. Please request another reset link.',
+      };
+    }
+    return {
+      valid: false,
+      expired: true,
+      error: 'Unable to verify this password reset link. It may have expired or already been used.',
+    };
+  }
+}
+
+// 7c. Confirm New Password with Firebase Authentication
+export async function confirmFirebasePasswordReset(
+  oobCode: string,
+  newPassword: string
+): Promise<{ success: boolean; email?: string; error?: string }> {
+  const cleanCode = oobCode.trim();
+  if (!cleanCode) {
+    return {
+      success: false,
+      error: 'Missing password reset code. Please request a new reset link.',
+    };
+  }
+  if (!newPassword || newPassword.length < 6) {
+    return {
+      success: false,
+      error: 'Your new password must be at least 6 characters long.',
+    };
+  }
+
+  try {
+    const email = await verifyPasswordResetCode(auth, cleanCode);
+    await confirmPasswordReset(auth, cleanCode, newPassword);
+    return {
+      success: true,
+      email: email.trim().toLowerCase(),
+    };
+  } catch (error: any) {
+    console.warn('Firebase confirmPasswordReset error:', error?.code || error?.message);
+    if (error?.code === 'auth/expired-action-code') {
+      return {
+        success: false,
+        error: 'Your password reset link has expired. Please request a new reset link.',
+      };
+    }
+    if (error?.code === 'auth/invalid-action-code') {
+      return {
+        success: false,
+        error: 'This password reset link is invalid or has already been used. Please request a new reset link.',
+      };
+    }
+    if (error?.code === 'auth/weak-password') {
+      return {
+        success: false,
+        error: 'Please choose a stronger password (at least 6 characters).',
+      };
+    }
+    return {
+      success: false,
+      error: error?.message || 'Failed to reset password. Please request a new reset link and try again.',
+    };
   }
 }
 
@@ -423,17 +566,208 @@ export async function signOutFirebaseUser(): Promise<void> {
   }
 }
 
-// 9. Persist Student Profile to Firestore
-export async function saveStudentProfileToFirestore(student: StudentProfile) {
+export const PAID_PLAN_VALIDITY_DAYS = 90; // 3 Months (90 Days) validity for ₹49 Standard & ₹99 Premium
+
+export function computePaidPlanExpiryIsoDate(existingExpiresAt?: string | null): {
+  purchasedAt: string;
+  expiresAt: string;
+  validityDays: number;
+} {
+  const now = new Date();
+  const purchasedAt = now.toISOString().split('T')[0];
+  const expiry = new Date(now);
+
+  if (existingExpiresAt) {
+    const parsedExisting = new Date(existingExpiresAt);
+    if (!isNaN(parsedExisting.getTime()) && parsedExisting.getTime() > now.getTime()) {
+      // Extend active subscription by 90 days (3 months) from current expiry
+      parsedExisting.setDate(parsedExisting.getDate() + PAID_PLAN_VALIDITY_DAYS);
+      return {
+        purchasedAt,
+        expiresAt: parsedExisting.toISOString().split('T')[0],
+        validityDays: PAID_PLAN_VALIDITY_DAYS,
+      };
+    }
+  }
+
+  // Set 3-month (90-day) expiration from activation date
+  expiry.setDate(now.getDate() + PAID_PLAN_VALIDITY_DAYS);
+  return {
+    purchasedAt,
+    expiresAt: expiry.toISOString().split('T')[0],
+    validityDays: PAID_PLAN_VALIDITY_DAYS,
+  };
+}
+
+// 9. Persist Student Profile to Firestore (with 90-day paid plan expiry enforcement)
+export async function saveStudentProfileToFirestore(student: StudentProfile & { firebaseUid?: string }) {
   try {
     const studentRef = doc(db, 'students', student.id);
-    await setDoc(studentRef, {
-      ...student,
-      lastActiveDate: new Date().toISOString()
-    }, { merge: true });
-    return { success: true };
+    const activePlan = student.plan || 'free';
+    const isPaid = activePlan === 'basic' || activePlan === 'premium';
+    const fallbackDates = isPaid ? computePaidPlanExpiryIsoDate() : null;
+
+    const resolvedPurchasedAt = isPaid
+      ? student.planPurchasedAt || fallbackDates?.purchasedAt
+      : undefined;
+    const resolvedExpiresAt = isPaid
+      ? student.planExpiresAt || fallbackDates?.expiresAt
+      : undefined;
+
+    const planLabel =
+      activePlan === 'premium'
+        ? 'PREMIUM PLAN – ₹99 – 90 Days'
+        : activePlan === 'basic'
+        ? 'STANDARD PLAN – ₹49 – 90 Days'
+        : 'FREE PLAN – ₹0 – Lifetime';
+
+    // Clean undefined values before Firestore setDoc
+    const cleanData = JSON.parse(
+      JSON.stringify({
+        ...student,
+        plan: activePlan,
+        planLabel,
+        isLifetimeFree: activePlan === 'free',
+        planPurchasedAt: resolvedPurchasedAt,
+        planExpiresAt: isPaid ? resolvedExpiresAt : null,
+        subscriptionValidityDays: isPaid ? PAID_PLAN_VALIDITY_DAYS : 'Lifetime',
+        lastActiveDate: new Date().toISOString(),
+      })
+    );
+    await setDoc(studentRef, cleanData, { merge: true });
+    return {
+      success: true,
+      planPurchasedAt: resolvedPurchasedAt,
+      planExpiresAt: resolvedExpiresAt,
+    };
   } catch (error) {
     console.warn('Firestore save student error:', error);
     return { success: false, error };
   }
 }
+
+// 10. Persist Subscription Upgrade to Firestore (sets 3-month / 90-day expiration for ₹49 Standard and ₹99 Premium)
+export async function saveSubscriptionToFirestore(
+  studentId: string,
+  subscriptionData: {
+    plan: 'free' | 'basic' | 'premium';
+    planPurchasedAt?: string;
+    planExpiresAt?: string;
+    currentExpiresAt?: string;
+    paymentId?: string;
+    orderId?: string;
+    amountInr?: number;
+  }
+): Promise<{
+  success: boolean;
+  plan: 'free' | 'basic' | 'premium';
+  planPurchasedAt: string;
+  planExpiresAt: string | null;
+  validityDays: number | 'Lifetime';
+  error?: unknown;
+}> {
+  const isPaid = subscriptionData.plan === 'basic' || subscriptionData.plan === 'premium';
+  const computedDates = computePaidPlanExpiryIsoDate(subscriptionData.currentExpiresAt);
+
+  const planPurchasedAt =
+    subscriptionData.planPurchasedAt || computedDates.purchasedAt;
+  const planExpiresAt = isPaid
+    ? subscriptionData.planExpiresAt || computedDates.expiresAt
+    : null;
+  const validityDays: number | 'Lifetime' = isPaid ? PAID_PLAN_VALIDITY_DAYS : 'Lifetime';
+  const planLabel =
+    subscriptionData.plan === 'premium'
+      ? 'PREMIUM PLAN – ₹99 – 90 Days'
+      : subscriptionData.plan === 'basic'
+      ? 'STANDARD PLAN – ₹49 – 90 Days'
+      : 'FREE PLAN – ₹0 – Lifetime';
+  const amountInr =
+    subscriptionData.amountInr ??
+    (subscriptionData.plan === 'premium' ? 99 : subscriptionData.plan === 'basic' ? 49 : 0);
+
+  try {
+    const studentRef = doc(db, 'students', studentId);
+    const cleanSub = JSON.parse(
+      JSON.stringify({
+        plan: subscriptionData.plan,
+        planLabel,
+        isLifetimeFree: subscriptionData.plan === 'free',
+        planPurchasedAt,
+        planExpiresAt,
+        subscriptionValidityDays: validityDays,
+        lastPaymentId: subscriptionData.paymentId || null,
+        lastOrderId: subscriptionData.orderId || null,
+        lastPaymentAmountInr: amountInr,
+        subscriptionUpdatedAt: new Date().toISOString(),
+      })
+    );
+    await setDoc(studentRef, cleanSub, { merge: true });
+    return {
+      success: true,
+      plan: subscriptionData.plan,
+      planPurchasedAt,
+      planExpiresAt,
+      validityDays,
+    };
+  } catch (error) {
+    console.warn('Firestore save subscription error:', error);
+    return {
+      success: false,
+      plan: subscriptionData.plan,
+      planPurchasedAt,
+      planExpiresAt,
+      validityDays,
+      error,
+    };
+  }
+}
+
+// 10b. Fetch Student Subscription Status from Firestore to keep Dashboard synchronized with Firebase
+export async function fetchStudentSubscriptionFromFirestore(studentId: string): Promise<{
+  found: boolean;
+  plan?: 'free' | 'basic' | 'premium';
+  planPurchasedAt?: string;
+  planExpiresAt?: string | null;
+}> {
+  if (!studentId) return { found: false };
+  try {
+    const snap = await getDoc(doc(db, 'students', studentId));
+    if (!snap.exists()) {
+      return { found: false };
+    }
+    const data = snap.data();
+    const rawPlan = data?.plan;
+    const plan: 'free' | 'basic' | 'premium' =
+      rawPlan === 'premium' || rawPlan === 'basic' ? rawPlan : 'free';
+    return {
+      found: true,
+      plan,
+      planPurchasedAt: data?.planPurchasedAt || undefined,
+      planExpiresAt: data?.planExpiresAt || null,
+    };
+  } catch {
+    return { found: false };
+  }
+}
+
+// 11. Aliases used by AuthModal for Email Registration, Login & Profile Lookup
+export async function registerWithFirebaseEmail(
+  email: string,
+  password: string,
+  _name?: string
+) {
+  return registerFirebaseEmailUser(email, password);
+}
+
+export async function loginWithFirebaseEmail(email: string, password: string) {
+  return loginFirebaseEmailUser(email, password);
+}
+
+export async function getStudentProfileByEmailFromFirestore(
+  _email: string
+): Promise<StudentProfile | null> {
+  return null;
+}
+
+export { onAuthStateChanged };
+

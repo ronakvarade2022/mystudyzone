@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Header } from './components/Header';
 import { StudentDashboard } from './components/StudentDashboard';
@@ -16,29 +16,134 @@ import { ShivajiStoriesView } from './components/ShivajiStoriesView';
 import { SudokuView } from './components/SudokuView';
 import { FutureSkillsView } from './components/FutureSkillsView';
 import { ReferralHubView } from './components/ReferralHubView';
+import { DemoSectionView } from './components/DemoSectionView';
 import { MembershipModal } from './components/MembershipModal';
+import { PlanUpgradePromptModal } from './components/PlanUpgradePromptModal';
 import { AuthModal } from './components/AuthModal';
+import { PasswordResetModal } from './components/PasswordResetModal';
 import { SubjectName, QuizLevel } from './types';
-import { Trophy, ShieldCheck, HeartHandshake, User, Crown } from 'lucide-react';
-import "./firebase";
+import { canAccessFeature, canAccessSubject } from './utils/subscriptionAccess';
+import { Trophy } from 'lucide-react';
+import './firebase';
+
+const FEATURE_TITLES: Record<string, string> = {
+  stories: 'Story World (45+ Audio Moral Stories)',
+  shivaji: 'Chhatrapati Shivaji Maharaj Stories (50 Chapters)',
+  drawing: 'Drawing & Colouring Studio',
+  cricket: 'Cricket Champions Hub',
+  scholarship: 'Maharashtra Scholarship (4th & 7th Std)',
+  'future-skills': 'AI Learning Academy & Future Skills',
+  'ai-academy': 'AI Learning Academy & Future Skills',
+  certificates: 'Official Champion Certificates & Leaderboard',
+  leaderboard: 'Official Champion Certificates & Leaderboard',
+  referrals: 'Learn • Share • Grow • Earn Referral Hub',
+};
+
 const AppContent: React.FC = () => {
-  const { 
-    activeRole, 
-    setActiveRole, 
-    currentStudent, 
+  const {
+    activeRole,
+    currentStudent,
     studentsList,
     quickSwitchStudent,
-    isAuthModalOpen, 
-    setIsAuthModalOpen 
+    isAuthModalOpen,
+    setIsAuthModalOpen,
   } = useApp();
 
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [quizInitialSubject, setQuizInitialSubject] = useState<SubjectName | undefined>(undefined);
   const [quizInitialLevel, setQuizInitialLevel] = useState<QuizLevel | undefined>(undefined);
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
+  const [authDefaultTab, setAuthDefaultTab] = useState<'login' | 'register' | 'parent' | 'admin' | 'forgot'>('login');
+  const [authInitialEmail, setAuthInitialEmail] = useState<string>('');
+  const [resetOobCode, setResetOobCode] = useState<string>('');
+  const [isResetModalOpen, setIsResetModalOpen] = useState<boolean>(false);
   const [isMembershipOpen, setIsMembershipOpen] = useState<boolean>(false);
+  const [membershipInitialPlan, setMembershipInitialPlan] = useState<'basic' | 'premium'>('premium');
+
+  // Detect Firebase Authentication password reset link (?mode=resetPassword&oobCode=...)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const mode = params.get('mode');
+      const oobCode = params.get('oobCode');
+      const emailParam = params.get('email');
+
+      if (mode === 'resetPassword' && oobCode) {
+        setResetOobCode(oobCode);
+        setIsResetModalOpen(true);
+      } else if (emailParam) {
+        setAuthInitialEmail(emailParam);
+      }
+    } catch {
+      // Ignore URL parsing errors
+    }
+  }, []);
+
+  const clearResetQueryParams = () => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('mode');
+      url.searchParams.delete('oobCode');
+      url.searchParams.delete('apiKey');
+      url.searchParams.delete('lang');
+      window.history.replaceState({}, document.title, url.pathname + url.search);
+    } catch {
+      // Ignore history API errors
+    }
+  };
+
+  // Upgrade prompt modal state when a student clicks a locked feature or subject
+  const [upgradePrompt, setUpgradePrompt] = useState<{
+    isOpen: boolean;
+    featureTitle: string;
+    requiredPlan: 'basic' | 'premium';
+    reasonMessage: string;
+  }>({
+    isOpen: false,
+    featureTitle: '',
+    requiredPlan: 'basic',
+    reasonMessage: '',
+  });
+
+  const openMembershipWithPlan = (plan: 'basic' | 'premium' = 'premium') => {
+    setMembershipInitialPlan(plan);
+    setIsMembershipOpen(true);
+  };
 
   const handleNavigateTab = (tab: string, subjectParam?: SubjectName, levelParam?: QuizLevel) => {
+    // Always allow demo, dashboard, profile, admin, parent
+    if (activeRole === 'student' && currentStudent && tab !== 'demo' && tab !== 'dashboard' && tab !== 'profile') {
+      // 1. If navigating to a specific quiz subject, check subject access first
+      if (tab === 'quizzes' && subjectParam) {
+        const subjAccess = canAccessSubject(currentStudent, subjectParam);
+        if (!subjAccess.allowed) {
+          setUpgradePrompt({
+            isOpen: true,
+            featureTitle: `${subjectParam} Subject & Quizzes`,
+            requiredPlan: 'basic',
+            reasonMessage:
+              subjAccess.reason ||
+              `${subjectParam} is locked on the Free Plan. Upgrade to the ₹49 Standard Plan or ₹99 Premium Plan to unlock all 14 school subjects!`,
+          });
+          return;
+        }
+      }
+
+      // 2. Check feature-level access
+      const featAccess = canAccessFeature(currentStudent, tab);
+      if (!featAccess.allowed) {
+        setUpgradePrompt({
+          isOpen: true,
+          featureTitle: FEATURE_TITLES[tab] || featAccess.featureTitle || 'Premium Learning Feature',
+          requiredPlan: featAccess.requiredPlan === 'basic' ? 'basic' : 'premium',
+          reasonMessage:
+            featAccess.upgradeMessage ||
+            'Upgrade your subscription plan to unlock this learning module!',
+        });
+        return;
+      }
+    }
+
     if (subjectParam) {
       setQuizInitialSubject(subjectParam);
     }
@@ -54,154 +159,146 @@ const AppContent: React.FC = () => {
       {/* Header */}
       <Header
         currentTab={currentTab}
-        setCurrentTab={setCurrentTab}
+        setCurrentTab={(tab) => handleNavigateTab(tab)}
         onOpenAuth={() => setIsAuthModalOpen(true)}
-        onOpenMembership={() => setIsMembershipOpen(true)}
+        onOpenMembership={() => openMembershipWithPlan('premium')}
       />
 
       {/* Main Content Arena */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 pt-6 pb-12">
-        {/* Referral Hub View (Accessible directly or from navigation) */}
-        {currentTab === 'referrals' ? (
+        {/* Live Interactive DEMO Playground (No payment required, isolated state) */}
+        {currentTab === 'demo' ? (
+          <DemoSectionView onUpgradeClick={() => openMembershipWithPlan('premium')} />
+        ) : currentTab === 'referrals' ? (
           <ReferralHubView
             currentUserId={currentStudent?.id || 'guest_ambassador'}
-            userName={currentStudent?.name || (activeRole === 'parent' ? 'Champion Parent' : 'Champion Ambassador')}
+            userName={
+              currentStudent?.name ||
+              (activeRole === 'parent' ? 'Champion Parent' : 'Champion Ambassador')
+            }
             userEmail={currentStudent?.email || ''}
             userMobile={currentStudent?.mobile || ''}
             initialRole={activeRole === 'parent' ? 'parent' : 'student'}
-            onNavigateUpgrade={() => setIsMembershipOpen(true)}
+            onNavigateUpgrade={() => openMembershipWithPlan('premium')}
           />
         ) : (
           <>
             {/* Signed Out Gate for Student Portal */}
             {activeRole === 'student' && !currentStudent && (
               <div className="max-w-xl mx-auto my-12 bg-white rounded-3xl p-8 border border-amber-300 shadow-xl text-center space-y-6 animate-in zoom-in-95">
-            <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center text-4xl shadow-lg shadow-orange-500/20">
-              🏆
-            </div>
-            
-            <div className="space-y-2">
-              <span className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-200">
-                Authentication Required
-              </span>
-              <h2 className="text-2xl sm:text-3xl font-display font-extrabold text-slate-900 mt-2">
-                Welcome to Vacation Champions!
-              </h2>
-              <p className="text-sm text-slate-600 max-w-md mx-auto font-medium leading-relaxed">
-                You have securely signed out of your session. Please sign in with your registered student account or switch to a profile below.
-              </p>
-            </div>
+                <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center text-4xl shadow-lg shadow-orange-500/20">
+                  🏆
+                </div>
 
-            {/* Quick Switch from Available Registered Students */}
-            {studentsList.length > 0 && (
-              <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200 space-y-2.5 text-left">
-                <span className="text-xs font-extrabold text-amber-900 block">
-                  Select Registered Student on this Device:
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {studentsList.map(s => (
-                    <button
-                      key={s.id}
-                      onClick={() => quickSwitchStudent(s.id)}
-                      className="p-3 rounded-xl bg-white border border-amber-200 hover:border-amber-400 hover:bg-amber-100/40 text-left transition-all cursor-pointer flex items-center gap-2.5 shadow-2xs"
-                    >
-                      <span className="text-2xl">{s.avatar}</span>
-                      <div className="overflow-hidden">
-                        <p className="font-bold text-xs text-slate-900 truncate">{s.name}</p>
-                        <p className="text-[10px] text-amber-800 font-extrabold">{s.classLevel} • {s.points} XP</p>
-                      </div>
-                    </button>
-                  ))}
+                <div className="space-y-2">
+                  <span className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-200">
+                    Authentication Required
+                  </span>
+                  <h2 className="text-2xl sm:text-3xl font-display font-extrabold text-slate-900 mt-2">
+                    Welcome to Vacation Champions!
+                  </h2>
+                  <p className="text-sm text-slate-600 max-w-md mx-auto font-medium leading-relaxed">
+                    Sign in with your registered student account or create a new account to get our Lifetime Free Plan automatically!
+                  </p>
+                </div>
+
+                {/* Quick Switch from Available Registered Students */}
+                {studentsList.length > 0 && (
+                  <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200 space-y-2.5 text-left">
+                    <span className="text-xs font-extrabold text-amber-900 block">
+                      Select Registered Student on this Device:
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {studentsList.map((s) => (
+                        <button
+                          key={s.id}
+                          onClick={() => quickSwitchStudent(s.id)}
+                          className="p-3 rounded-xl bg-white border border-amber-200 hover:border-amber-400 hover:bg-amber-100/40 text-left transition-all cursor-pointer flex items-center gap-2.5 shadow-2xs"
+                        >
+                          <span className="text-2xl">{s.avatar}</span>
+                          <div className="overflow-hidden">
+                            <p className="font-bold text-xs text-slate-900 truncate">{s.name}</p>
+                            <p className="text-[10px] text-amber-800 font-extrabold">
+                              {s.classLevel} • {s.points} XP
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+                  <button
+                    onClick={() => setIsAuthModalOpen(true)}
+                    className="w-full sm:w-auto px-6 py-3 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs shadow-md transition-all cursor-pointer"
+                  >
+                    Sign In to Student Account
+                  </button>
+                  <button
+                    onClick={() => setIsAuthModalOpen(true)}
+                    className="w-full sm:w-auto px-6 py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
+                  >
+                    Register New Student
+                  </button>
                 </div>
               </div>
             )}
 
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-              <button
-                onClick={() => setIsAuthModalOpen(true)}
-                className="w-full sm:w-auto px-6 py-3 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs shadow-md transition-all cursor-pointer"
-              >
-                Sign In to Student Account
-              </button>
-              <button
-                onClick={() => setIsAuthModalOpen(true)}
-                className="w-full sm:w-auto px-6 py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
-              >
-                Register New Student
-              </button>
-            </div>
-          </div>
-        )}
+            {/* Authenticated Student Content */}
+            {activeRole === 'student' && currentStudent && (
+              <>
+                {currentTab === 'dashboard' && (
+                  <StudentDashboard
+                    onNavigateTab={handleNavigateTab}
+                    onOpenMembership={(plan) => openMembershipWithPlan(plan || 'premium')}
+                  />
+                )}
 
-        {/* Authenticated Student Content */}
-        {activeRole === 'student' && currentStudent && (
-          <>
-            {currentTab === 'dashboard' && (
-              <StudentDashboard
-                onNavigateTab={handleNavigateTab}
-                onOpenMembership={() => setIsMembershipOpen(true)}
-              />
+                {currentTab === 'quizzes' && (
+                  <SubjectQuizView
+                    initialSubject={quizInitialSubject}
+                    initialLevel={quizInitialLevel}
+                    onOpenMembership={(plan) => openMembershipWithPlan(plan || 'basic')}
+                  />
+                )}
+
+                {currentTab === 'stories' && <StoryWorldView />}
+
+                {currentTab === 'drawing' && <DrawingChampionsView />}
+
+                {currentTab === 'puzzles' && <PuzzleChampionsView />}
+
+                {currentTab === 'sudoku' && <SudokuView />}
+
+                {currentTab === 'cricket' && <CricketChampionsView />}
+
+                {currentTab === 'scholarship' && <ScholarshipChampionsView />}
+
+                {currentTab === 'shivaji' && <ShivajiStoriesView />}
+
+                {(currentTab === 'future-skills' || currentTab === 'ai-academy') && (
+                  <FutureSkillsView
+                    onOpenMembership={() => openMembershipWithPlan('premium')}
+                  />
+                )}
+
+                {(currentTab === 'leaderboard' || currentTab === 'certificates') && (
+                  <CertificatesView />
+                )}
+
+                {currentTab === 'profile' && (
+                  <StudentProfileView
+                    onOpenMembership={(plan) => openMembershipWithPlan(plan || 'premium')}
+                    onNavigateTab={(t) => handleNavigateTab(t)}
+                  />
+                )}
+              </>
             )}
 
-            {currentTab === 'quizzes' && (
-              <SubjectQuizView 
-                initialSubject={quizInitialSubject} 
-                initialLevel={quizInitialLevel}
-              />
-            )}
+            {activeRole === 'parent' && <ParentDashboard />}
 
-            {currentTab === 'stories' && (
-              <StoryWorldView />
-            )}
-
-            {currentTab === 'drawing' && (
-              <DrawingChampionsView />
-            )}
-
-            {currentTab === 'puzzles' && (
-              <PuzzleChampionsView />
-            )}
-
-            {currentTab === 'sudoku' && (
-              <SudokuView />
-            )}
-
-            {currentTab === 'cricket' && (
-              <CricketChampionsView />
-            )}
-
-            {currentTab === 'scholarship' && (
-              <ScholarshipChampionsView />
-            )}
-
-            {currentTab === 'shivaji' && (
-              <ShivajiStoriesView />
-            )}
-
-            {(currentTab === 'future-skills' || currentTab === 'ai-academy') && (
-              <FutureSkillsView onOpenMembership={() => setIsMembershipOpen(true)} />
-            )}
-
-            {(currentTab === 'leaderboard' || currentTab === 'certificates') && (
-              <CertificatesView />
-            )}
-
-            {currentTab === 'profile' && (
-              <StudentProfileView
-                onOpenMembership={() => setIsMembershipOpen(true)}
-                onNavigateTab={handleNavigateTab}
-              />
-            )}
-          </>
-        )}
-
-        {activeRole === 'parent' && (
-          <ParentDashboard />
-        )}
-
-        {activeRole === 'admin' && (
-          <AdminDashboard />
-        )}
+            {activeRole === 'admin' && <AdminDashboard />}
           </>
         )}
       </main>
@@ -210,13 +307,57 @@ const AppContent: React.FC = () => {
       <MembershipModal
         isOpen={isMembershipOpen}
         onClose={() => setIsMembershipOpen(false)}
+        initialSelectedPlan={membershipInitialPlan}
+      />
+
+      <PlanUpgradePromptModal
+        isOpen={upgradePrompt.isOpen}
+        onClose={() => setUpgradePrompt((prev) => ({ ...prev, isOpen: false }))}
+        currentStudent={currentStudent}
+        featureTitle={upgradePrompt.featureTitle}
+        requiredPlan={upgradePrompt.requiredPlan}
+        upgradeMessage={upgradePrompt.reasonMessage}
+        onSelectUpgradePlan={(plan: 'basic' | 'premium') => {
+          setUpgradePrompt((prev) => ({ ...prev, isOpen: false }));
+          openMembershipWithPlan(plan);
+        }}
+        onTryDemo={() => {
+          setUpgradePrompt((prev) => ({ ...prev, isOpen: false }));
+          setCurrentTab('demo');
+        }}
       />
 
       <AuthModal
         isOpen={isAuthModalOpen || isAuthOpen}
+        defaultTab={authDefaultTab}
+        initialEmail={authInitialEmail}
         onClose={() => {
           setIsAuthModalOpen(false);
           setIsAuthOpen(false);
+          setAuthDefaultTab('login');
+        }}
+      />
+
+      <PasswordResetModal
+        isOpen={isResetModalOpen}
+        oobCode={resetOobCode}
+        onClose={() => {
+          setIsResetModalOpen(false);
+          clearResetQueryParams();
+        }}
+        onRequestAnotherLink={(email) => {
+          setIsResetModalOpen(false);
+          clearResetQueryParams();
+          if (email) setAuthInitialEmail(email);
+          setAuthDefaultTab('forgot');
+          setIsAuthModalOpen(true);
+        }}
+        onProceedToLogin={(email) => {
+          setIsResetModalOpen(false);
+          clearResetQueryParams();
+          if (email) setAuthInitialEmail(email);
+          setAuthDefaultTab('login');
+          setIsAuthModalOpen(true);
         }}
       />
 
@@ -230,14 +371,14 @@ const AppContent: React.FC = () => {
           <p className="text-slate-600">
             Read • Play • Learn • Become a Champion! Educational gaming platform for Class 2 to Class 8.
           </p>
-          <div className="flex flex-wrap items-center justify-center gap-4 pt-2 text-[11px] text-slate-400">
-            <span>Guaranteed Zero-Question Repetition</span>
+          <div className="flex flex-wrap items-center justify-center gap-4 pt-2 text-[11px] text-slate-500 font-semibold">
+            <span>FREE PLAN – ₹0 – Lifetime</span>
             <span>•</span>
-            <span>45 Audio Stories in 3 Languages</span>
+            <span>STANDARD PLAN – ₹49 – 90 Days</span>
             <span>•</span>
-            <span>Drawing & Brain Puzzles</span>
+            <span>PREMIUM PLAN – ₹99 – 90 Days</span>
             <span>•</span>
-            <span>Verified Indian Razorpay Integration</span>
+            <span>English & Marathi Female Story Voices</span>
           </div>
         </div>
       </footer>

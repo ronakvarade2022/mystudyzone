@@ -68,6 +68,7 @@ export interface StudentProfile {
   isPhoneVerified?: boolean;
   isEmailVerified?: boolean;
   firebaseUid?: string;
+  passwordHash?: string;
   // 3-Role Access Portal & School Governance extensions
   linkedParentId?: string;
   attendanceRecords?: AttendanceRecord[];

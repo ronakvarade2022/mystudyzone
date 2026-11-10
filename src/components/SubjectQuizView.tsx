@@ -25,9 +25,13 @@ import {
   Flame
 } from 'lucide-react';
 
+import { canAccessSubject } from '../utils/subscriptionAccess';
+import { PlanUpgradePromptModal } from './PlanUpgradePromptModal';
+
 interface SubjectQuizViewProps {
   initialSubject?: SubjectName;
   initialLevel?: QuizLevel;
+  onOpenMembership?: (plan?: 'basic' | 'premium') => void;
 }
 
 const ALL_14_SUBJECTS: { name: SubjectName; icon: string; bgGradient: string }[] = [
@@ -79,40 +83,41 @@ const LEVEL_CARDS_META: LevelCardMeta[] = [
   {
     level: 1,
     title: 'Level 1 – Easy',
-    difficulty: 'Easy',
+    difficulty: 'Basic Foundation',
     diffBadge: 'bg-emerald-100 text-emerald-800 border-emerald-300',
     cardGradient: 'from-emerald-500 to-teal-600',
-    description: 'Foundations & Core Basics: direct concepts, familiar vocabulary, and visual questions.'
+    description: 'Basic Foundation: 10 unique foundational questions covering core concepts, vocabulary, and visual recognition.'
   },
   {
     level: 2,
-    title: 'Level 2 – Medium',
-    difficulty: 'Medium',
+    title: 'Level 2 – Moderate',
+    difficulty: 'Concept Application',
     diffBadge: 'bg-blue-100 text-blue-800 border-blue-300',
     cardGradient: 'from-blue-500 to-indigo-600',
-    description: 'Concept Application: multi-step calculations, fill-in-blanks, and relation matching.'
+    description: 'Concept Application: 10 completely different questions with multi-step application, fill-in-blanks, and relation matching.'
   },
   {
     level: 3,
-    title: 'Level 3 – Hard',
-    difficulty: 'Hard',
+    title: 'Level 3 – Difficult',
+    difficulty: 'Analytical Thinking',
     diffBadge: 'bg-amber-100 text-amber-800 border-amber-300',
     cardGradient: 'from-amber-500 to-orange-600',
-    description: 'Analytical Thinking: complex word problems, spotting incorrect choices, and deductions.'
+    description: 'Analytical Thinking: 10 completely different analytical questions, word problems, error spotting, and deductions.'
   },
   {
     level: 4,
-    title: 'Level 4 – Expert',
-    difficulty: 'Expert',
+    title: 'Level 4 – Advanced',
+    difficulty: 'Higher-Order Mastery',
     diffBadge: 'bg-purple-100 text-purple-800 border-purple-300',
     cardGradient: 'from-purple-600 to-rose-600',
-    description: 'Mastery & Synthesis: highest level questions with dynamic option shuffling (A, B, C, D) and zero predictable answer sequences.'
+    description: 'Advanced Mastery: 10 completely different higher-order & tricky questions with dynamic option shuffling (A, B, C, D).'
   }
 ];
 
 export const SubjectQuizView: React.FC<SubjectQuizViewProps> = ({ 
   initialSubject = 'Mathematics',
-  initialLevel = 1 
+  initialLevel = 1,
+  onOpenMembership
 }) => {
   const { 
     currentStudent, 
@@ -122,7 +127,10 @@ export const SubjectQuizView: React.FC<SubjectQuizViewProps> = ({
     submitQuizAttempt 
   } = useApp();
 
-  const [selectedSubject, setSelectedSubject] = useState<SubjectName>(initialSubject);
+  const safeInitialSubject: SubjectName =
+    canAccessSubject(currentStudent, initialSubject).allowed ? initialSubject : 'Mathematics';
+
+  const [selectedSubject, setSelectedSubject] = useState<SubjectName>(safeInitialSubject);
   const [selectedLevel, setSelectedLevel] = useState<QuizLevel>(initialLevel);
   const [quizState, setQuizState] = useState<'idle' | 'playing' | 'completed'>('idle');
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
@@ -135,6 +143,12 @@ export const SubjectQuizView: React.FC<SubjectQuizViewProps> = ({
 
   // Subject switch confirmation modal state
   const [pendingSubjectSwitch, setPendingSubjectSwitch] = useState<SubjectName | null>(null);
+  // Locked subject upgrade prompt state
+  const [lockedSubjectPrompt, setLockedSubjectPrompt] = useState<{
+    isOpen: boolean;
+    subjectName: string;
+    reason: string;
+  }>({ isOpen: false, subjectName: '', reason: '' });
 
   const [answersLog, setAnswersLog] = useState<{
     questionId: string;
@@ -179,6 +193,18 @@ export const SubjectQuizView: React.FC<SubjectQuizViewProps> = ({
 
   // Handle clicking on another subject tab
   const handleSubjectClick = (targetSubject: SubjectName) => {
+    const access = canAccessSubject(currentStudent, targetSubject);
+    if (!access.allowed) {
+      setLockedSubjectPrompt({
+        isOpen: true,
+        subjectName: `${targetSubject} Quizzes`,
+        reason:
+          access.reason ||
+          `${targetSubject} is locked on the Free Plan. Upgrade to the ₹49 Standard Plan or ₹99 Premium Plan to unlock all 14 school subjects!`
+      });
+      return;
+    }
+
     if (targetSubject === selectedSubject && quizState !== 'idle') return;
 
     if (quizState === 'playing' && (currentIndex > 0 || isAnswerChecked)) {
@@ -397,6 +423,8 @@ export const SubjectQuizView: React.FC<SubjectQuizViewProps> = ({
           {ALL_14_SUBJECTS.map((sub) => {
             const isSelected = selectedSubject === sub.name;
             const subProgress = getSubjectLevelProgress(sub.name);
+            const subjectAccess = canAccessSubject(currentStudent, sub.name);
+            const isSubLocked = !subjectAccess.allowed;
             return (
               <button
                 key={sub.name}
@@ -404,16 +432,24 @@ export const SubjectQuizView: React.FC<SubjectQuizViewProps> = ({
                 className={`px-3.5 py-2 rounded-2xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
                   isSelected 
                     ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-md shadow-amber-600/20 scale-[1.02]' 
-                    : 'bg-slate-100 hover:bg-amber-50 text-slate-700 border border-slate-200'
+                    : isSubLocked
+                      ? 'bg-slate-100/80 hover:bg-indigo-50 text-slate-500 border border-slate-200'
+                      : 'bg-slate-100 hover:bg-amber-50 text-slate-700 border border-slate-200'
                 }`}
               >
                 <span>{sub.icon}</span>
                 <span>{sub.name}</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
-                  isSelected ? 'bg-white/25 text-white' : 'bg-slate-200 text-slate-600'
-                }`}>
-                  L{subProgress.maxUnlockedLevel}
-                </span>
+                {isSubLocked ? (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full font-extrabold bg-indigo-100 text-indigo-700 flex items-center gap-0.5">
+                    <Lock className="w-2.5 h-2.5" /> ₹49
+                  </span>
+                ) : (
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                    isSelected ? 'bg-white/25 text-white' : 'bg-slate-200 text-slate-600'
+                  }`}>
+                    L{subProgress.maxUnlockedLevel}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -959,6 +995,20 @@ export const SubjectQuizView: React.FC<SubjectQuizViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* UPGRADE PROMPT MODAL FOR LOCKED SUBJECTS */}
+      <PlanUpgradePromptModal
+        isOpen={lockedSubjectPrompt.isOpen}
+        onClose={() => setLockedSubjectPrompt(prev => ({ ...prev, isOpen: false }))}
+        currentStudent={currentStudent}
+        featureTitle={lockedSubjectPrompt.subjectName}
+        requiredPlan="basic"
+        upgradeMessage={lockedSubjectPrompt.reason}
+        onSelectUpgradePlan={(plan: 'basic' | 'premium') => {
+          setLockedSubjectPrompt(prev => ({ ...prev, isOpen: false }));
+          onOpenMembership?.(plan);
+        }}
+      />
     </div>
   );
 };

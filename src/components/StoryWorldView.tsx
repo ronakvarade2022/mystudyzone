@@ -78,18 +78,18 @@ export const StoryWorldView: React.FC = () => {
     const list: string[] = [];
     list.push(story.title);
     story.content.forEach(p => list.push(p));
-    list.push(`Moral of the story: ${story.moral}`);
+    const moralPrefix =
+      story.language === 'Marathi'
+        ? 'या गोष्टीचे तात्पर्य: '
+        : story.language === 'Hindi'
+        ? 'इस कहानी की सीख: '
+        : 'Moral of the story: ';
+    list.push(`${moralPrefix}${story.moral}`);
     return list;
   };
 
-  const handlePlayAudio = () => {
+  const startStoryFromIndex = (startIndex: number = 0) => {
     if (!selectedStory) return;
-
-    if (speechState.isPaused) {
-      speechService.resume();
-      return;
-    }
-
     const paragraphs = getStoryParagraphs(selectedStory);
     speechService.setRate(playbackSpeed);
     speechService.setVolume(volume);
@@ -103,8 +103,20 @@ export const StoryWorldView: React.FC = () => {
       () => {
         // Complete story audio finished!
         markStoryCompleted(selectedStory.id);
-      }
+      },
+      startIndex
     );
+  };
+
+  const handlePlayAudio = () => {
+    if (!selectedStory) return;
+
+    if (speechState.isPaused) {
+      speechService.resume();
+      return;
+    }
+
+    startStoryFromIndex(speechState.currentParagraphIndex || 0);
   };
 
   const handlePauseAudio = () => {
@@ -116,15 +128,23 @@ export const StoryWorldView: React.FC = () => {
   };
 
   const handleRestartAudio = () => {
-    speechService.restart();
+    startStoryFromIndex(0);
   };
 
   const handleForwardParagraph = () => {
-    speechService.nextParagraph();
+    if (!selectedStory) return;
+    const total = selectedStory.content.length + 2;
+    if (speechState.currentParagraphIndex + 1 < total) {
+      startStoryFromIndex(speechState.currentParagraphIndex + 1);
+    }
   };
 
   const handleRewindParagraph = () => {
-    speechService.previousParagraph();
+    if (speechState.currentParagraphIndex > 0) {
+      startStoryFromIndex(speechState.currentParagraphIndex - 1);
+    } else {
+      startStoryFromIndex(0);
+    }
   };
 
   const handleSpeedChange = (newSpeed: number) => {
@@ -133,7 +153,7 @@ export const StoryWorldView: React.FC = () => {
   };
 
   const handleRetryAudio = () => {
-    speechService.retry();
+    startStoryFromIndex(speechState.currentParagraphIndex || 0);
   };
 
   const handleSelectQuizOption = (questionId: string, optionIndex: number) => {
@@ -161,7 +181,7 @@ export const StoryWorldView: React.FC = () => {
               </h1>
             </div>
             <p className="text-xs sm:text-sm text-slate-500 font-medium mt-1">
-              Read, listen to continuous Indian voice narration with paragraph highlighting, and complete quizzes!
+              Listen to complete stories from beginning to end in a natural, sweet, polite female voice with live paragraph highlighting!
             </p>
           </div>
 
@@ -249,9 +269,16 @@ export const StoryWorldView: React.FC = () => {
             {/* Modal Header */}
             <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white p-5 sm:p-6 flex items-center justify-between shrink-0 shadow-xs">
               <div>
-                <span className="bg-white/20 px-2.5 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider">
-                  {selectedStory.language} Story World
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="bg-white/20 px-2.5 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider">
+                    {selectedStory.language} Story World
+                  </span>
+                  {speechState.isPlaying && speechState.currentParagraphIndex === 0 && (
+                    <span className="bg-emerald-400 text-slate-950 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold animate-pulse">
+                      🔊 Narrating Title...
+                    </span>
+                  )}
+                </div>
                 <h2 className="text-xl sm:text-2xl font-display font-extrabold mt-1">
                   {selectedStory.title}
                 </h2>
@@ -264,91 +291,120 @@ export const StoryWorldView: React.FC = () => {
               </button>
             </div>
 
-            {/* Complete Audio Narration Toolbar (Requirements 1-10) */}
-            <div className="bg-amber-100/90 px-4 sm:px-6 py-3 border-b border-amber-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
-              {/* Playback Controls: Rewind, Play/Pause/Resume, Forward, Restart */}
-              <div className="flex items-center gap-1.5 sm:gap-2">
-                {/* Rewind paragraph */}
-                <button
-                  onClick={handleRewindParagraph}
-                  disabled={speechState.currentParagraphIndex === 0}
-                  className="p-2 rounded-xl bg-white/90 hover:bg-white text-slate-700 text-xs border border-amber-300 disabled:opacity-40 cursor-pointer"
-                  title="Rewind to previous paragraph"
-                >
-                  <SkipBack className="w-4 h-4 text-amber-900" />
-                </button>
+            {/* Complete Audio Narration Toolbar: Play, Pause, Resume, Restart */}
+            <div className="bg-amber-100/90 px-4 sm:px-6 py-3.5 border-b border-amber-200 space-y-2.5 shrink-0">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                {/* Playback Controls: Play, Pause, Resume, Restart, Prev/Next */}
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                  {/* Play Button */}
+                  {!speechState.isPlaying && !speechState.isPaused && (
+                    <button
+                      onClick={handlePlayAudio}
+                      className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors"
+                    >
+                      <Play className="w-4 h-4 fill-white" />
+                      <span>Play Full Story</span>
+                    </button>
+                  )}
 
-                {/* Play / Pause / Resume */}
-                {!speechState.isPlaying ? (
+                  {/* Pause Button */}
+                  {speechState.isPlaying && (
+                    <button
+                      onClick={handlePauseAudio}
+                      className="px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors"
+                    >
+                      <Pause className="w-4 h-4 fill-white" />
+                      <span>Pause</span>
+                    </button>
+                  )}
+
+                  {/* Resume Button */}
+                  {speechState.isPaused && (
+                    <button
+                      onClick={handleResumeAudio}
+                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors"
+                    >
+                      <Play className="w-4 h-4 fill-white" />
+                      <span>Resume</span>
+                    </button>
+                  )}
+
+                  {/* Restart Button */}
                   <button
-                    onClick={speechState.isPaused ? handleResumeAudio : handlePlayAudio}
-                    className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs flex items-center gap-2 shadow-xs cursor-pointer transition-colors"
+                    onClick={handleRestartAudio}
+                    className="px-3 py-2 rounded-xl bg-white hover:bg-amber-50 text-amber-950 font-bold text-xs border border-amber-300 cursor-pointer flex items-center gap-1.5"
+                    title="Restart story from beginning"
                   >
-                    <Play className="w-4 h-4 fill-white" />
-                    <span>{speechState.isPaused ? 'Resume' : 'Play Narration'}</span>
+                    <RotateCcw className="w-3.5 h-3.5 text-amber-900" />
+                    <span>Restart</span>
                   </button>
-                ) : (
+
+                  {/* Rewind paragraph */}
                   <button
-                    onClick={handlePauseAudio}
-                    className="px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs flex items-center gap-2 shadow-xs cursor-pointer transition-colors"
+                    onClick={handleRewindParagraph}
+                    disabled={speechState.currentParagraphIndex === 0}
+                    className="p-2 rounded-xl bg-white/90 hover:bg-white text-slate-700 text-xs border border-amber-300 disabled:opacity-40 cursor-pointer"
+                    title="Previous Paragraph"
                   >
-                    <Pause className="w-4 h-4 fill-white" />
-                    <span>Pause</span>
+                    <SkipBack className="w-4 h-4 text-amber-900" />
                   </button>
-                )}
 
-                {/* Forward paragraph */}
-                <button
-                  onClick={handleForwardParagraph}
-                  disabled={speechState.currentParagraphIndex >= (selectedStory.content.length + 1)}
-                  className="p-2 rounded-xl bg-white/90 hover:bg-white text-slate-700 text-xs border border-amber-300 disabled:opacity-40 cursor-pointer"
-                  title="Skip to next paragraph"
-                >
-                  <SkipForward className="w-4 h-4 text-amber-900" />
-                </button>
+                  {/* Forward paragraph */}
+                  <button
+                    onClick={handleForwardParagraph}
+                    disabled={speechState.currentParagraphIndex >= (selectedStory.content.length + 1)}
+                    className="p-2 rounded-xl bg-white/90 hover:bg-white text-slate-700 text-xs border border-amber-300 disabled:opacity-40 cursor-pointer"
+                    title="Next Paragraph"
+                  >
+                    <SkipForward className="w-4 h-4 text-amber-900" />
+                  </button>
+                </div>
 
-                {/* Restart story audio */}
-                <button
-                  onClick={handleRestartAudio}
-                  className="p-2 rounded-xl bg-white/90 hover:bg-white text-slate-700 text-xs border border-amber-300 cursor-pointer"
-                  title="Restart story from beginning"
-                >
-                  <RotateCcw className="w-4 h-4 text-amber-900" />
-                </button>
+                {/* Speed & Voice Info */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-xs font-bold text-slate-700 bg-white/90 px-2.5 py-1 rounded-xl border border-amber-300">
+                    <span className="text-slate-500">Speed:</span>
+                    <select
+                      value={playbackSpeed}
+                      onChange={(e) => handleSpeedChange(parseFloat(e.target.value))}
+                      className="bg-transparent font-bold text-amber-900 focus:outline-hidden cursor-pointer"
+                    >
+                      <option value="0.85">0.85x Slow</option>
+                      <option value="0.95">0.95x Sweet & Clear</option>
+                      <option value="1.0">1.0x Normal</option>
+                      <option value="1.15">1.15x Fast</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-1 text-[11px] font-bold text-amber-900 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-300">
+                    <Volume2 className="w-3.5 h-3.5 text-orange-600" />
+                    <span>
+                      {selectedStory.language === 'English'
+                        ? 'Sweet Female English Voice'
+                        : selectedStory.language === 'Hindi'
+                        ? 'Sweet Female Hindi Voice'
+                        : 'Fluent Female Marathi Voice'}
+                    </span>
+                  </div>
+                </div>
               </div>
 
-              {/* Progress & Paragraph indicator */}
-              {speechState.isPlaying && (
-                <div className="flex items-center gap-2 text-xs font-bold text-amber-900 bg-amber-200/80 px-3 py-1 rounded-full border border-amber-300">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                  <span>
-                    Narrating Para {speechState.currentParagraphIndex} of {selectedStory.content.length + 1}
-                  </span>
+              {/* Continuous Story Progress Bar */}
+              <div className="flex items-center gap-3 text-[11px] font-bold text-amber-950">
+                <span>
+                  {speechState.isPlaying
+                    ? `🔊 Narrating Part ${speechState.currentParagraphIndex + 1} of ${selectedStory.content.length + 2}`
+                    : speechState.isPaused
+                    ? `⏸ Paused at Part ${speechState.currentParagraphIndex + 1} of ${selectedStory.content.length + 2}`
+                    : `Ready to Play Full Story (${selectedStory.content.length + 2} Parts)`}
+                </span>
+                <div className="flex-1 h-2 bg-amber-200/80 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-orange-500 to-emerald-500 transition-all duration-300 rounded-full"
+                    style={{ width: `${speechState.progressPercent || 0}%` }}
+                  />
                 </div>
-              )}
-
-              {/* Speed controls (0.75x, 1x, 1.25x, 1.5x) */}
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1 text-xs font-bold text-slate-700 bg-white/90 px-2.5 py-1 rounded-xl border border-amber-300">
-                  <span className="text-slate-500">Speed:</span>
-                  <select
-                    value={playbackSpeed}
-                    onChange={(e) => handleSpeedChange(parseFloat(e.target.value))}
-                    className="bg-transparent font-bold text-amber-900 focus:outline-hidden cursor-pointer"
-                  >
-                    <option value="0.75">0.75x</option>
-                    <option value="1.0">1.0x (Normal)</option>
-                    <option value="1.25">1.25x</option>
-                    <option value="1.5">1.5x</option>
-                  </select>
-                </div>
-
-                <div className="hidden sm:flex items-center gap-1 text-[11px] font-semibold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200">
-                  <Volume2 className="w-3.5 h-3.5" />
-                  <span>
-                    {selectedStory.language === 'English' ? 'Indian English' : selectedStory.language === 'Hindi' ? 'Indian Hindi' : 'Marathi Voice'}
-                  </span>
-                </div>
+                <span>{speechState.progressPercent || 0}%</span>
               </div>
             </div>
 
@@ -381,7 +437,7 @@ export const StoryWorldView: React.FC = () => {
                     <p
                       key={i}
                       ref={isCurrentActive ? activeParagraphRef : null}
-                      onClick={() => speechService.jumpToParagraph(paraIndexInSpeech)}
+                      onClick={() => startStoryFromIndex(paraIndexInSpeech)}
                       className={`text-justify p-3 rounded-2xl transition-all cursor-pointer ${
                         isCurrentActive 
                           ? 'bg-amber-100/90 border-2 border-amber-500 shadow-sm text-slate-950 font-medium scale-[1.01]' 
@@ -404,7 +460,7 @@ export const StoryWorldView: React.FC = () => {
 
                 return (
                   <div 
-                    onClick={() => speechService.jumpToParagraph(moralParaIndex)}
+                    onClick={() => startStoryFromIndex(moralParaIndex)}
                     className={`p-5 rounded-2xl transition-all cursor-pointer ${
                       isMoralActive 
                         ? 'bg-amber-200 border-2 border-amber-600 shadow-md scale-[1.01]' 

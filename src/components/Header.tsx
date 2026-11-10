@@ -29,6 +29,8 @@ import {
   Gift
 } from 'lucide-react';
 
+import { canAccessFeature, getStudentPlanInfo } from '../utils/subscriptionAccess';
+
 interface HeaderProps {
   currentTab: string;
   setCurrentTab: (tab: string) => void;
@@ -46,7 +48,6 @@ export const Header: React.FC<HeaderProps> = ({
     activeRole, 
     currentUser,
     switchRole,
-    loginAsSampleAccount,
     currentStudent, 
     notifications,
     markNotificationAsRead
@@ -54,7 +55,6 @@ export const Header: React.FC<HeaderProps> = ({
 
   const [showNotifications, setShowNotifications] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [showSampleAccountsMenu, setShowSampleAccountsMenu] = useState(false);
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -70,7 +70,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-amber-200/80 shadow-xs">
-      {/* Top Banner with Tagline & Quick Role Switcher */}
+      {/* Top Banner with Tagline, DEMO Section Button & Role Switcher */}
       <div className="bg-gradient-to-r from-amber-600 via-amber-500 to-orange-500 text-white px-4 py-1.5 text-xs font-medium">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -85,88 +85,19 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Sample Accounts Switcher for Evaluation */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowSampleAccountsMenu(!showSampleAccountsMenu)}
-                className="bg-amber-900/60 hover:bg-amber-900 text-white px-2.5 py-0.5 rounded-md text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer border border-amber-300/40"
-                title="Switch between the 4 verified sample test accounts"
-              >
-                <span>🧪 Sample Accounts</span>
-              </button>
-
-              {showSampleAccountsMenu && (
-                <div className="absolute right-0 mt-1.5 w-72 bg-white text-slate-800 rounded-2xl shadow-2xl border border-slate-200 p-2.5 z-50 animate-in zoom-in-95 space-y-1.5">
-                  <div className="px-2 py-1 border-b border-slate-100 flex items-center justify-between">
-                    <span className="text-[11px] font-extrabold uppercase text-amber-900">Switch Test Account</span>
-                    <button onClick={() => setShowSampleAccountsMenu(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      loginAsSampleAccount('student1');
-                      setShowSampleAccountsMenu(false);
-                      setCurrentTab('dashboard');
-                    }}
-                    className="w-full p-2 rounded-xl text-left hover:bg-amber-50 text-xs transition-colors flex items-center gap-2 cursor-pointer border border-transparent hover:border-amber-200"
-                  >
-                    <span className="text-lg">🦁</span>
-                    <div>
-                      <p className="font-bold text-slate-900">Student 1: Aarav Sharma</p>
-                      <p className="text-[10px] text-slate-500">Class 4 • Only sees Aarav's records</p>
-                    </div>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      loginAsSampleAccount('student2');
-                      setShowSampleAccountsMenu(false);
-                      setCurrentTab('dashboard');
-                    }}
-                    className="w-full p-2 rounded-xl text-left hover:bg-amber-50 text-xs transition-colors flex items-center gap-2 cursor-pointer border border-transparent hover:border-amber-200"
-                  >
-                    <span className="text-lg">🦄</span>
-                    <div>
-                      <p className="font-bold text-slate-900">Student 2: Ananya Deshmukh</p>
-                      <p className="text-[10px] text-slate-500">Class 6 • Only sees Ananya's records</p>
-                    </div>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      loginAsSampleAccount('parent1');
-                      setShowSampleAccountsMenu(false);
-                      setCurrentTab('parent');
-                    }}
-                    className="w-full p-2 rounded-xl text-left hover:bg-amber-50 text-xs transition-colors flex items-center gap-2 cursor-pointer border border-transparent hover:border-amber-200"
-                  >
-                    <span className="text-lg">👨‍👧</span>
-                    <div>
-                      <p className="font-bold text-slate-900">Parent 1: Rajesh Sharma</p>
-                      <p className="text-[10px] text-slate-500">Linked to Aarav • Cannot see Ananya</p>
-                    </div>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      loginAsSampleAccount('admin');
-                      setShowSampleAccountsMenu(false);
-                      setCurrentTab('admin');
-                    }}
-                    className="w-full p-2 rounded-xl text-left hover:bg-purple-50 text-xs transition-colors flex items-center gap-2 cursor-pointer border border-transparent hover:border-purple-200"
-                  >
-                    <span className="text-lg">🛡️</span>
-                    <div>
-                      <p className="font-bold text-purple-900">Admin: ronakvarade2022@gmail.com</p>
-                      <p className="text-[10px] text-purple-600">Full platform oversight & governance</p>
-                    </div>
-                  </button>
-                </div>
-              )}
-            </div>
+            {/* Dedicated DEMO Section Button (Strictly 2 Isolated Demo Records per Section) */}
+            <button
+              type="button"
+              onClick={() => setCurrentTab('demo')}
+              className={`px-2.5 py-0.5 rounded-md text-[11px] font-extrabold flex items-center gap-1 transition-all cursor-pointer border ${
+                currentTab === 'demo'
+                  ? 'bg-slate-900 text-amber-300 border-amber-300 shadow-xs'
+                  : 'bg-amber-900/60 hover:bg-amber-900 text-white border-amber-300/40'
+              }`}
+              title="Open isolated DEMO section (2 DEMO DATA records per module)"
+            >
+              <span>🎯 DEMO</span>
+            </button>
 
             {/* Multi-Role Switcher Tabs */}
             <div className="flex items-center gap-1 bg-black/20 p-0.5 rounded-md text-[11px]">
@@ -269,6 +200,9 @@ export const Header: React.FC<HeaderProps> = ({
                   <BookOpen className="w-3.5 h-3.5" />
                 </span>
                 <span>Stories (45)</span>
+                {!canAccessFeature(currentStudent, 'stories').allowed && (
+                  <Lock className="w-3 h-3 text-indigo-600" />
+                )}
               </button>
 
               <button
@@ -310,6 +244,9 @@ export const Header: React.FC<HeaderProps> = ({
                   <Activity className="w-3.5 h-3.5" />
                 </span>
                 <span>Cricket</span>
+                {!canAccessFeature(currentStudent, 'cricket').allowed && (
+                  <Lock className="w-3 h-3 text-amber-600" />
+                )}
               </button>
 
               <button
@@ -322,6 +259,9 @@ export const Header: React.FC<HeaderProps> = ({
                   <Palette className="w-3.5 h-3.5" />
                 </span>
                 <span>Drawing</span>
+                {!canAccessFeature(currentStudent, 'drawing').allowed && (
+                  <Lock className="w-3 h-3 text-indigo-600" />
+                )}
               </button>
 
               <button
@@ -334,6 +274,9 @@ export const Header: React.FC<HeaderProps> = ({
                   <Trophy className="w-3.5 h-3.5" />
                 </span>
                 <span>Scholarship</span>
+                {!canAccessFeature(currentStudent, 'scholarship').allowed && (
+                  <Lock className="w-3 h-3 text-amber-600" />
+                )}
               </button>
 
               <button
@@ -346,6 +289,9 @@ export const Header: React.FC<HeaderProps> = ({
                   <Crown className="w-3.5 h-3.5" />
                 </span>
                 <span>Shivaji (50)</span>
+                {!canAccessFeature(currentStudent, 'shivaji').allowed && (
+                  <Lock className="w-3 h-3 text-indigo-600" />
+                )}
               </button>
 
               <button
@@ -358,6 +304,9 @@ export const Header: React.FC<HeaderProps> = ({
                   <Bot className="w-3.5 h-3.5" />
                 </span>
                 <span>AI Skills</span>
+                {!canAccessFeature(currentStudent, 'future-skills').allowed && (
+                  <Lock className="w-3 h-3 text-amber-600" />
+                )}
               </button>
 
               <button
@@ -370,6 +319,9 @@ export const Header: React.FC<HeaderProps> = ({
                   <GraduationCap className="w-3.5 h-3.5" />
                 </span>
                 <span>Certificates</span>
+                {!canAccessFeature(currentStudent, 'certificates').allowed && (
+                  <Lock className="w-3 h-3 text-amber-600" />
+                )}
               </button>
 
               <button
@@ -386,6 +338,9 @@ export const Header: React.FC<HeaderProps> = ({
                   <Gift className="w-3.5 h-3.5" />
                 </span>
                 <span>Refer & Earn</span>
+                {!canAccessFeature(currentStudent, 'referrals').allowed && (
+                  <Lock className="w-3 h-3 text-amber-700" />
+                )}
               </button>
             </div>
           </nav>
@@ -424,23 +379,48 @@ export const Header: React.FC<HeaderProps> = ({
           )}
 
           {/* Membership Badge or Upgrade CTA */}
-          {currentStudent?.plan === 'free' ? (
-            <button
-              onClick={onOpenMembership}
-              className="hidden sm:flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-xs hover:shadow-md transition-all cursor-pointer"
-            >
-              <Crown className="w-3.5 h-3.5" />
-              <span>Get Plan (₹49)</span>
-            </button>
-          ) : (
-            <div 
-              onClick={onOpenMembership}
-              className="hidden sm:flex items-center gap-1 text-[11px] font-extrabold uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-emerald-200 transition-colors"
-            >
-              <Crown className="w-3 h-3 text-emerald-600" />
-              <span>{currentStudent?.plan === 'premium' ? 'Premium VIP' : 'Basic Member'}</span>
-            </div>
-          )}
+          {(() => {
+            const pInfo = getStudentPlanInfo(currentStudent);
+            if (pInfo.effectivePlan === 'free') {
+              return (
+                <button
+                  onClick={onOpenMembership}
+                  className={`hidden sm:flex items-center gap-1.5 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-xs hover:shadow-md transition-all cursor-pointer ${
+                    pInfo.isPaidPlanExpired
+                      ? 'bg-gradient-to-r from-rose-600 to-orange-600 hover:from-rose-700 hover:to-orange-700'
+                      : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600'
+                  }`}
+                  title={
+                    pInfo.isPaidPlanExpired
+                      ? `Previous ${pInfo.expiredPlanName} expired. Currently on FREE PLAN – ₹0 – Lifetime. Click to renew for 90 Days.`
+                      : 'Current Plan: FREE PLAN – ₹0 – Lifetime. Click to view ₹49 & ₹99 (90 Days) plans.'
+                  }
+                >
+                  <Crown className="w-3.5 h-3.5" />
+                  <span>
+                    {pInfo.isPaidPlanExpired
+                      ? 'Free Plan (Expired) • Renew 90d'
+                      : 'FREE PLAN (₹0) • Upgrade ₹49/₹99 (90d)'}
+                  </span>
+                </button>
+              );
+            }
+            return (
+              <div
+                onClick={onOpenMembership}
+                className="hidden sm:flex items-center gap-1.5 text-[11px] font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-300 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-emerald-200 transition-colors"
+                title={`Active Plan: ${pInfo.planDisplayName} • ${pInfo.daysRemainingDisplay}`}
+              >
+                <Crown className="w-3.5 h-3.5 text-emerald-600" />
+                <span>
+                  {pInfo.effectivePlan === 'premium'
+                    ? 'PREMIUM – ₹99'
+                    : 'STANDARD – ₹49'}{' '}
+                  ({pInfo.daysRemaining}d left)
+                </span>
+              </div>
+            );
+          })()}
 
           {/* Notification Bell */}
           <div className="relative">
@@ -700,14 +680,41 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* ACCOUNT & PLANS */}
-          <div className="pt-2 border-t border-amber-100">
+          {/* ACCOUNT & PLANS + DEMO SECTION */}
+          <div className="pt-2 border-t border-amber-100 space-y-2">
+            {currentStudent && (
+              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] space-y-1">
+                <div className="flex items-center justify-between font-extrabold text-amber-950">
+                  <span>Active Plan: {getStudentPlanInfo(currentStudent).planDisplayName}</span>
+                  <span className="text-emerald-700">
+                    {getStudentPlanInfo(currentStudent).daysRemainingDisplay}
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-600 font-bold">
+                  Plans: FREE (₹0 Lifetime) • STANDARD (₹49 / 90d) • PREMIUM (₹99 / 90d)
+                </div>
+              </div>
+            )}
+            <button
+              onClick={() => { setCurrentTab('demo'); setMobileMenuOpen(false); }}
+              className={`w-full p-2.5 rounded-xl text-center font-extrabold text-xs border transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                currentTab === 'demo'
+                  ? 'bg-slate-900 text-amber-300 border-amber-400'
+                  : 'bg-slate-100 text-slate-800 border-slate-200 hover:bg-slate-200'
+              }`}
+            >
+              <span>🎯 DEMO Section (Strictly 2 Isolated Demo Records)</span>
+            </button>
             <button
               onClick={() => { onOpenMembership(); setMobileMenuOpen(false); }}
               className="w-full p-3 rounded-2xl text-center bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 text-white font-extrabold text-xs shadow-md flex items-center justify-center gap-2 cursor-pointer"
             >
               <Star className="w-4 h-4 fill-amber-300 text-amber-300" />
-              <span>Upgrade Plans (₹49 / ₹99)</span>
+              <span>
+                {getStudentPlanInfo(currentStudent).isPaidPlanExpired
+                  ? 'Renew Subscription Plan (₹49 / ₹99 – 90 Days)'
+                  : 'View & Upgrade Plans (₹49 / ₹99 – 90 Days)'}
+              </span>
             </button>
           </div>
         </div>

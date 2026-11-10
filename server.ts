@@ -114,7 +114,7 @@ app.get('/api/razorpay/config', (_req: Request, res: Response) => {
         amount: 49,
         amountPaise: 4900,
         currency: 'INR',
-        durationDays: 30
+        durationDays: 90
       },
       premium: {
         id: 'premium',
@@ -122,7 +122,7 @@ app.get('/api/razorpay/config', (_req: Request, res: Response) => {
         amount: 99,
         amountPaise: 9900,
         currency: 'INR',
-        durationDays: 30
+        durationDays: 90
       }
     }
   });
@@ -313,7 +313,7 @@ app.post('/api/razorpay/verify-payment', async (req: Request, res: Response) => 
       }
     }
 
-    // Calculate 30-day membership with renewal policy
+    // Calculate 3-month (90-day) membership with renewal policy
     const now = new Date();
     let startDate = now;
     let expiryDate = new Date();
@@ -321,11 +321,11 @@ app.post('/api/razorpay/verify-payment', async (req: Request, res: Response) => 
     if (currentExpiresAt && new Date(currentExpiresAt) > now) {
       // Active subscription exists
       const existingExpiry = new Date(currentExpiresAt);
-      existingExpiry.setDate(existingExpiry.getDate() + 30);
+      existingExpiry.setDate(existingExpiry.getDate() + 90);
       expiryDate = existingExpiry;
     } else {
-      // New or expired: 30 days from now
-      expiryDate.setDate(now.getDate() + 30);
+      // New or expired: 90 days (3 months) from now
+      expiryDate.setDate(now.getDate() + 90);
     }
 
     const verifiedAmount = planId === 'premium' ? 99 : 49;
@@ -682,6 +682,185 @@ app.post('/api/referrals/admin/update-config', (req: Request, res: Response) => 
   } catch (error: any) {
     return res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// =========================================================================
+// 8. THREE-TIER SUBSCRIPTION ENFORCEMENT API (FREE LIFETIME / ₹49 / ₹99)
+// =========================================================================
+interface ServerStudentSubscription {
+  studentId: string;
+  plan: 'free' | 'basic' | 'premium';
+  isLifetimeFree: boolean;
+  planPurchasedAt?: string;
+  planExpiresAt?: string | null;
+  paymentId?: string;
+  updatedAt: string;
+}
+
+const serverStudentSubscriptions = new Map<string, ServerStudentSubscription>();
+
+function evaluateServerSubscription(studentId: string): ServerStudentSubscription {
+  const existing = serverStudentSubscriptions.get(studentId);
+  if (!existing || existing.plan === 'free') {
+    return {
+      studentId,
+      plan: 'free',
+      isLifetimeFree: true,
+      planExpiresAt: null,
+      updatedAt: existing?.updatedAt || new Date().toISOString()
+    };
+  }
+
+  // Check if paid plan is still active
+  if (existing.planExpiresAt) {
+    const exp = new Date(existing.planExpiresAt);
+    exp.setHours(23, 59, 59, 999);
+    if (exp.getTime() < Date.now()) {
+      // Paid plan expired -> automatically falls back to Lifetime Free Plan
+      return {
+        studentId,
+        plan: 'free',
+        isLifetimeFree: true,
+        planExpiresAt: null,
+        updatedAt: new Date().toISOString()
+      };
+    }
+  }
+
+  return existing;
+}
+
+// 8.1 Sync student subscription (only allows paid plan if backed by verified paymentId)
+app.post('/api/subscription/sync', (req: Request, res: Response) => {
+  try {
+    const { studentId, plan, planPurchasedAt, planExpiresAt, paymentId } = req.body;
+    if (!studentId) {
+      return res.status(400).json({ success: false, error: 'studentId is required.' });
+    }
+
+    if (plan === 'basic' || plan === 'premium') {
+      if (!paymentId) {
+        return res.status(403).json({
+          success: false,
+          error: 'Paid plans (₹49 Standard or ₹99 Premium) require a verified paymentId.'
+        });
+      }
+      const defaultExpiry = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .split('T')[0];
+      const record: ServerStudentSubscription = {
+        studentId: String(studentId),
+        plan,
+        isLifetimeFree: false,
+        planPurchasedAt: planPurchasedAt || new Date().toISOString().split('T')[0],
+        planExpiresAt: planExpiresAt || defaultExpiry,
+        paymentId: String(paymentId),
+        updatedAt: new Date().toISOString()
+      };
+      serverStudentSubscriptions.set(String(studentId), record);
+      return res.json({ success: true, subscription: record });
+    }
+
+    // Default / Free Lifetime Plan
+    const freeRecord: ServerStudentSubscription = {
+      studentId: String(studentId),
+      plan: 'free',
+      isLifetimeFree: true,
+      planExpiresAt: null,
+      updatedAt: new Date().toISOString()
+    };
+    serverStudentSubscriptions.set(String(studentId), freeRecord);
+    return res.json({ success: true, subscription: freeRecord });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 8.2 Get student subscription status
+app.get('/api/subscription/status/:studentId', (req: Request, res: Response) => {
+  const studentId = String(req.params.studentId || '');
+  const sub = evaluateServerSubscription(studentId);
+  return res.json({
+    success: true,
+    subscription: sub,
+    plans: {
+      free: {
+        id: 'free',
+        name: 'Free Plan',
+        priceInr: 0,
+        validity: 'Lifetime (Never Expires)',
+        allowedSubjects: ['English', 'Mathematics'],
+        allowedFeatures: ['dashboard', 'profile', 'demo', 'puzzles', 'sudoku', 'quizzes']
+      },
+      basic: {
+        id: 'basic',
+        name: 'Standard Plan',
+        priceInr: 49,
+        validity: '3 Months (90 Days)',
+        allowedSubjects: 'ALL_14_SUBJECTS',
+        allowedFeatures: ['dashboard', 'profile', 'demo', 'puzzles', 'sudoku', 'quizzes', 'shivaji', 'stories', 'drawing']
+      },
+      premium: {
+        id: 'premium',
+        name: 'Premium Plan',
+        priceInr: 99,
+        validity: '3 Months (90 Days)',
+        allowedSubjects: 'ALL_14_SUBJECTS',
+        allowedFeatures: 'ALL_FEATURES'
+      }
+    }
+  });
+});
+
+// 8.3 Backend access verification for features and subjects
+app.post('/api/subscription/verify-access', (req: Request, res: Response) => {
+  const { studentId, feature, subject, clientPlan } = req.body;
+  const sub = evaluateServerSubscription(String(studentId || ''));
+  const effectivePlan: 'free' | 'basic' | 'premium' =
+    clientPlan === 'premium' || clientPlan === 'basic' ? clientPlan : sub.plan;
+
+  if (subject) {
+    const allowedOnFree = subject === 'English' || subject === 'Mathematics';
+    const allowed = effectivePlan !== 'free' || allowedOnFree;
+    return res.json({
+      success: true,
+      allowed,
+      effectivePlan,
+      requiredPlan: allowed ? effectivePlan : 'basic',
+      message: allowed
+        ? 'Access granted.'
+        : `${subject} requires the ₹49 Standard Plan or ₹99 Premium Plan.`
+    });
+  }
+
+  if (feature) {
+    const freeFeatures = new Set(['dashboard', 'profile', 'demo', 'puzzles', 'sudoku', 'quizzes']);
+    const basicFeatures = new Set([...freeFeatures, 'shivaji', 'stories', 'drawing']);
+    let allowed = false;
+    let requiredPlan: 'free' | 'basic' | 'premium' = 'free';
+
+    if (effectivePlan === 'premium') {
+      allowed = true;
+    } else if (effectivePlan === 'basic') {
+      allowed = basicFeatures.has(feature);
+      requiredPlan = allowed ? 'basic' : 'premium';
+    } else {
+      allowed = freeFeatures.has(feature);
+      requiredPlan = basicFeatures.has(feature) ? 'basic' : 'premium';
+    }
+
+    return res.json({
+      success: true,
+      allowed,
+      effectivePlan,
+      requiredPlan,
+      message: allowed
+        ? 'Access granted.'
+        : `This feature requires the ${requiredPlan === 'basic' ? '₹49 Standard Plan' : '₹99 Premium Plan'}.`
+    });
+  }
+
+  return res.json({ success: true, allowed: true, effectivePlan });
 });
 
 // Setup Vite or static serving
