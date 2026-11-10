@@ -23,6 +23,47 @@ export interface CreateOrderResponse {
   error?: string;
 }
 
+export interface CreateQrResponse {
+  success: boolean;
+  qrId: string;
+  imageUrl: string;
+  amount: number; // in paise
+  amountRupees: number;
+  currency: string;
+  planId: 'basic' | 'premium';
+  planTitle?: string;
+  status: string;
+  createdAt: number;
+  expiresInSeconds: number;
+  keyId?: string;
+  error?: string;
+}
+
+export interface CheckQrStatusResponse {
+  success: boolean;
+  paid: boolean;
+  status: 'WAITING' | 'PAID' | 'EXPIRED' | 'FAILED';
+  paymentId?: string;
+  orderId?: string;
+  method?: string;
+  amount?: number;
+  message?: string;
+  transaction?: PaymentTransaction;
+  membership?: {
+    membershipId: string;
+    studentId: string;
+    studentName: string;
+    planId: 'basic' | 'premium';
+    planTitle: string;
+    amount: number;
+    startDate: string;
+    expiryDate: string;
+    status: 'ACTIVE';
+    daysRemaining: number;
+  };
+  error?: string;
+}
+
 export interface VerifyPaymentResponse {
   success: boolean;
   alreadyProcessed?: boolean;
@@ -236,6 +277,72 @@ export async function createRazorpayOrder(
     ...data,
     keyId: resolvedKeyId
   };
+}
+
+// 2.1 Dynamic Razorpay UPI QR Code Generator
+export async function createRazorpayQrCode(
+  student: StudentProfile,
+  planId: 'basic' | 'premium'
+): Promise<CreateQrResponse> {
+  const payload = {
+    planId,
+    studentId: student.id,
+    studentName: student.name,
+    email: student.email,
+    mobile: student.mobile
+  };
+
+  console.info(`[Razorpay QR] Generating dynamic UPI QR code for plan '${planId}' (₹${planId === 'premium' ? 99 : 49})...`);
+
+  const { res, urlUsed } = await fetchPaymentApi(
+    '/razorpay/create-qr',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    },
+    15000
+  );
+
+  let data: any = null;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(`Payment server returned an invalid response (HTTP ${res.status}) from ${urlUsed}.`);
+  }
+
+  if (!res.ok || !data?.success || !data?.qrId) {
+    const reason = data?.error || `Server failed to generate dynamic QR code (HTTP ${res.status}).`;
+    console.warn('[Razorpay QR] Creation failed:', reason);
+    throw new Error(reason);
+  }
+
+  return data;
+}
+
+// 2.2 Live QR Code Status Poller
+export async function checkRazorpayQrStatus(
+  qrId: string,
+  student: StudentProfile,
+  planId: 'basic' | 'premium'
+): Promise<CheckQrStatusResponse> {
+  const params = new URLSearchParams({
+    studentId: student.id,
+    planId,
+    studentName: student.name || 'Student',
+    email: student.email || '',
+    mobile: student.mobile || ''
+  });
+
+  const { res } = await fetchPaymentApi(`/razorpay/qr-status/${encodeURIComponent(qrId)}?${params.toString()}`, {}, 10000);
+  const data = await res.json().catch(() => ({
+    success: false,
+    paid: false,
+    status: 'FAILED',
+    error: 'Failed to verify QR payment status.'
+  }));
+
+  return data;
 }
 
 // 3. Cryptographic server-side payment verification

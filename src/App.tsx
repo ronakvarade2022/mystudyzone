@@ -21,6 +21,13 @@ import { MembershipModal } from './components/MembershipModal';
 import { PlanUpgradePromptModal } from './components/PlanUpgradePromptModal';
 import { AuthModal } from './components/AuthModal';
 import { PasswordResetModal } from './components/PasswordResetModal';
+import { HelpSupportView } from './components/HelpSupportView';
+import { GrievanceRedressalView } from './components/GrievanceRedressalView';
+import { TermsAndPrivacyView } from './components/TermsAndPrivacyView';
+import { AboutUsView } from './components/AboutUsView';
+import { ContactUsView } from './components/ContactUsView';
+import { FaqsView } from './components/FaqsView';
+import { FloatingAiChatbot } from './components/FloatingAiChatbot';
 import { SubjectName, QuizLevel } from './types';
 import { canAccessFeature, canAccessSubject } from './utils/subscriptionAccess';
 import { Trophy } from 'lucide-react';
@@ -111,8 +118,19 @@ const AppContent: React.FC = () => {
   };
 
   const handleNavigateTab = (tab: string, subjectParam?: SubjectName, levelParam?: QuizLevel) => {
-    // Always allow demo, dashboard, profile, admin, parent
-    if (activeRole === 'student' && currentStudent && tab !== 'demo' && tab !== 'dashboard' && tab !== 'profile') {
+    if (tab === 'ai-assistant') {
+      window.dispatchEvent(new CustomEvent('open-ai-chat'));
+      return;
+    }
+
+    const alwaysOpenTabs = new Set([
+      'demo', 'dashboard', 'profile', 'account', 'subscription',
+      'help-support', 'faqs', 'terms', 'privacy', 'disclaimer',
+      'grievance', 'about', 'contact', 'referrals', 'admin', 'parent'
+    ]);
+
+    // Check feature restrictions for students
+    if (activeRole === 'student' && currentStudent && !alwaysOpenTabs.has(tab)) {
       // 1. If navigating to a specific quiz subject, check subject access first
       if (tab === 'quizzes' && subjectParam) {
         const subjAccess = canAccessSubject(currentStudent, subjectParam);
@@ -180,6 +198,31 @@ const AppContent: React.FC = () => {
             userMobile={currentStudent?.mobile || ''}
             initialRole={activeRole === 'parent' ? 'parent' : 'student'}
             onNavigateUpgrade={() => openMembershipWithPlan('premium')}
+          />
+        ) : currentTab === 'help-support' ? (
+          <HelpSupportView
+            onNavigateTab={(t) => handleNavigateTab(t)}
+            onOpenMembership={(plan) => openMembershipWithPlan(plan || 'premium')}
+          />
+        ) : currentTab === 'grievance' ? (
+          <GrievanceRedressalView onNavigateTab={(t) => handleNavigateTab(t)} />
+        ) : currentTab === 'terms' ? (
+          <TermsAndPrivacyView initialTab="terms" onNavigateTab={(t) => handleNavigateTab(t)} />
+        ) : currentTab === 'privacy' ? (
+          <TermsAndPrivacyView initialTab="privacy" onNavigateTab={(t) => handleNavigateTab(t)} />
+        ) : currentTab === 'disclaimer' ? (
+          <TermsAndPrivacyView initialTab="disclaimer" onNavigateTab={(t) => handleNavigateTab(t)} />
+        ) : currentTab === 'about' ? (
+          <AboutUsView
+            onNavigateTab={(t) => handleNavigateTab(t)}
+            onOpenMembership={() => openMembershipWithPlan('premium')}
+          />
+        ) : currentTab === 'contact' ? (
+          <ContactUsView onNavigateTab={(t) => handleNavigateTab(t)} />
+        ) : currentTab === 'faqs' ? (
+          <FaqsView
+            onNavigateTab={(t) => handleNavigateTab(t)}
+            onOpenMembership={(plan) => openMembershipWithPlan(plan || 'premium')}
           />
         ) : (
           <>
@@ -287,7 +330,7 @@ const AppContent: React.FC = () => {
                   <CertificatesView />
                 )}
 
-                {currentTab === 'profile' && (
+                {(currentTab === 'profile' || currentTab === 'account' || currentTab === 'subscription') && (
                   <StudentProfileView
                     onOpenMembership={(plan) => openMembershipWithPlan(plan || 'premium')}
                     onNavigateTab={(t) => handleNavigateTab(t)}
@@ -361,24 +404,47 @@ const AppContent: React.FC = () => {
         }}
       />
 
+      {/* Global Floating Trilingual Gemini AI Chatbot */}
+      <FloatingAiChatbot onNavigateTab={handleNavigateTab} />
+
       {/* Footer */}
       <footer className="bg-white border-t border-amber-200/80 py-8 text-center text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 space-y-2">
+        <div className="max-w-7xl mx-auto px-4 space-y-3">
           <div className="flex items-center justify-center gap-2 font-display font-bold text-amber-900 text-sm">
             <Trophy className="w-4 h-4 text-amber-600" />
             <span>VACATION CHAMPIONS</span>
           </div>
-          <p className="text-slate-600">
+          <p className="text-slate-600 text-xs">
             Read • Play • Learn • Become a Champion! Educational gaming platform for Class 2 to Class 8.
           </p>
-          <div className="flex flex-wrap items-center justify-center gap-4 pt-2 text-[11px] text-slate-500 font-semibold">
+
+          {/* Quick Informational & Compliance Links */}
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 pt-2 text-[11px] text-slate-600 font-bold border-t border-slate-100">
+            <button type="button" onClick={() => handleNavigateTab('about')} className="hover:text-amber-800 cursor-pointer">About Us</button>
+            <span>•</span>
+            <button type="button" onClick={() => handleNavigateTab('contact')} className="hover:text-amber-800 cursor-pointer">Contact Us</button>
+            <span>•</span>
+            <button type="button" onClick={() => handleNavigateTab('help-support')} className="hover:text-amber-800 cursor-pointer">Help &amp; Support</button>
+            <span>•</span>
+            <button type="button" onClick={() => handleNavigateTab('faqs')} className="hover:text-amber-800 cursor-pointer">FAQs</button>
+            <span>•</span>
+            <button type="button" onClick={() => handleNavigateTab('grievance')} className="hover:text-amber-800 cursor-pointer">Grievance Redressal</button>
+            <span>•</span>
+            <button type="button" onClick={() => handleNavigateTab('terms')} className="hover:text-amber-800 cursor-pointer">Terms &amp; Conditions</button>
+            <span>•</span>
+            <button type="button" onClick={() => handleNavigateTab('privacy')} className="hover:text-amber-800 cursor-pointer">Privacy Policy</button>
+            <span>•</span>
+            <button type="button" onClick={() => handleNavigateTab('disclaimer')} className="hover:text-amber-800 cursor-pointer">Educational Disclaimer</button>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-4 pt-1 text-[11px] text-slate-400 font-medium">
             <span>FREE PLAN – ₹0 – Lifetime</span>
             <span>•</span>
             <span>STANDARD PLAN – ₹49 – 90 Days</span>
             <span>•</span>
             <span>PREMIUM PLAN – ₹99 – 90 Days</span>
             <span>•</span>
-            <span>English & Marathi Female Story Voices</span>
+            <span>English &amp; Marathi Female Story Voices</span>
           </div>
         </div>
       </footer>

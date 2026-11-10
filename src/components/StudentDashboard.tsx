@@ -30,7 +30,9 @@ import {
   CreditCard,
   Calendar,
   RefreshCw,
-  Gift
+  Gift,
+  Compass,
+  Brain
 } from 'lucide-react';
 import { QuizLevel, SubjectLevelProgress } from '../types';
 import { StudentMasteryChart } from './StudentMasteryChart';
@@ -151,6 +153,161 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               className="bg-gradient-to-r from-amber-200 to-white h-full rounded-full transition-all duration-500 shadow-xs"
               style={{ width: `${levelProgress}%` }}
             />
+          </div>
+        </div>
+      </div>
+
+      {/* ========================================================
+          DEDICATED PROFILE BAR & SIGN OUT / LOGIN ACCESS
+          Clear spelling: "👤 Student Profile (विद्यार्थी प्रोफाइल)" with Icons & Direct Sign Out
+          ======================================================== */}
+      <div className="bg-gradient-to-r from-amber-50 via-white to-orange-50 rounded-3xl p-4 sm:p-5 border-2 border-amber-300 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center text-3xl shadow-md shadow-amber-500/25 shrink-0 border-2 border-white">
+            {currentStudent.avatar || '🦁'}
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="w-6 h-6 rounded-lg bg-amber-500 text-white flex items-center justify-center">
+                <User className="w-4 h-4" />
+              </span>
+              <h2 className="text-lg sm:text-xl font-display font-black text-slate-900 tracking-tight">
+                Student Profile
+              </h2>
+              <span className="text-xs font-extrabold text-amber-900 bg-amber-100/90 px-2.5 py-0.5 rounded-full border border-amber-300">
+                (माझी प्रोफाइल)
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 font-medium mt-1">
+              <span className="font-bold text-slate-900">{currentStudent.name}</span>
+              <span className="text-slate-300">•</span>
+              <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md font-bold text-[11px]">
+                {currentStudent.classLevel}
+              </span>
+              <span className="text-slate-300">•</span>
+              <span className="font-mono text-slate-500 text-[11px]">
+                UID: {currentStudent.id}
+              </span>
+              <span className="text-slate-300">•</span>
+              <span className="text-emerald-700 font-bold flex items-center gap-1">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Verified Account</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Action Button: View Full Profile */}
+        <div className="flex items-center gap-2.5 w-full md:w-auto">
+          <button
+            type="button"
+            onClick={() => onNavigateTab('profile')}
+            className="w-full md:w-auto px-5 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-black text-xs shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.02]"
+            title="Open Student Profile page (विद्यार्थी प्रोफाइल उघडा)"
+          >
+            <User className="w-4 h-4 text-white" />
+            <span>Open Profile (माझी प्रोफाइल)</span>
+            <ChevronRight className="w-3.5 h-3.5 text-white" />
+          </button>
+        </div>
+      </div>
+
+      {/* ========================================================
+          TODAY'S DAILY LEARNING MISSIONS (3 Interactive Quests)
+          ======================================================== */}
+      <div className="bg-white rounded-3xl p-5 sm:p-6 border-2 border-amber-200/80 shadow-md space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-xs">
+              <Target className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base sm:text-lg font-display font-extrabold text-slate-900">
+                  Today's Learning Missions
+                </h3>
+                <span className="text-[11px] font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded-full">
+                  (आजचे ध्येय)
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 font-medium">
+                Complete daily missions to maintain your 🔥 {currentStudent.streakDays}-day streak and earn bonus points!
+              </p>
+            </div>
+          </div>
+          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200 self-start sm:self-auto">
+            ⭐ 3 Daily Quests Available
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+          {/* Mission 1: 10-Question Quiz */}
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50/50 border border-blue-200 flex flex-col justify-between hover:shadow-md transition-all">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-2xl">📝</span>
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-blue-600 text-white">
+                  +50 XP
+                </span>
+              </div>
+              <h4 className="font-extrabold text-sm text-slate-900">Daily Quiz Challenge</h4>
+              <p className="text-xs text-slate-600 font-medium">
+                Practice 10 unique questions in your class syllabus with zero repeated questions.
+              </p>
+            </div>
+            <button
+              onClick={() => onNavigateTab('quizzes')}
+              className="mt-4 w-full py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+            >
+              <Play className="w-3.5 h-3.5 fill-white" />
+              <span>Start Quiz (10 Qs)</span>
+            </button>
+          </div>
+
+          {/* Mission 2: Shivaji / Story */}
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-50 to-orange-50/50 border border-amber-200 flex flex-col justify-between hover:shadow-md transition-all">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-2xl">🏰</span>
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-600 text-white">
+                  +30 XP
+                </span>
+              </div>
+              <h4 className="font-extrabold text-sm text-slate-900">Story World & Shivaji Forts</h4>
+              <p className="text-xs text-slate-600 font-medium">
+                Listen or read inspiring historical tales of Chhatrapati Shivaji Maharaj and Panchatantra.
+              </p>
+            </div>
+            <button
+              onClick={() => onNavigateTab('stories')}
+              className="mt-4 w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-extrabold text-xs shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Explore Stories (45)</span>
+            </button>
+          </div>
+
+          {/* Mission 3: Brain Puzzle / Sudoku */}
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-50 to-teal-50/50 border border-emerald-200 flex flex-col justify-between hover:shadow-md transition-all">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-2xl">🧩</span>
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-600 text-white">
+                  +25 XP
+                </span>
+              </div>
+              <h4 className="font-extrabold text-sm text-slate-900">Brain Puzzles & Sudoku</h4>
+              <p className="text-xs text-slate-600 font-medium">
+                Sharpen your memory and logical thinking with colorful 4×4, 6×6 and 9×9 grids.
+              </p>
+            </div>
+            <button
+              onClick={() => onNavigateTab('sudoku')}
+              className="mt-4 w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+            >
+              <Brain className="w-3.5 h-3.5" />
+              <span>Solve Sudoku</span>
+            </button>
           </div>
         </div>
       </div>

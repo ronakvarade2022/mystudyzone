@@ -29,9 +29,9 @@ export const PlanUpgradePromptModal: React.FC<PlanUpgradePromptModalProps> = ({
   const planInfo = getStudentPlanInfo(currentStudent);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto overscroll-contain animate-in fade-in duration-150">
       <div
-        className="bg-white w-full max-w-3xl rounded-3xl shadow-2xl border-2 border-amber-300 overflow-hidden animate-in zoom-in-95 my-8"
+        className="bg-white w-full max-w-3xl rounded-3xl shadow-2xl border-2 border-amber-300 overflow-hidden animate-in zoom-in-95 m-auto my-auto"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}

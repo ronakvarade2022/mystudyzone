@@ -271,7 +271,9 @@ export async function handler(event) {
   if (method === 'POST' && normalizedPath === '/razorpay/create-order') {
     try {
       const body = JSON.parse(event.body || '{}');
-      const { planId, studentId, studentName, email, mobile } = body;
+      const rawPlan = body.planId || body.plan;
+      const planId = rawPlan === 'basic' || rawPlan === 'premium' ? rawPlan : null;
+      const { studentId, studentName, email, mobile } = body;
 
       if (!studentId) {
         return jsonResponse(400, {
@@ -280,7 +282,7 @@ export async function handler(event) {
         });
       }
 
-      if (planId !== 'basic' && planId !== 'premium') {
+      if (!planId) {
         return jsonResponse(400, {
           success: false,
           error: 'Invalid plan selected. Choose basic (₹49) or premium (₹99).'
@@ -352,6 +354,240 @@ export async function handler(event) {
         success: false,
         error: err?.message || 'Internal server error during order creation.'
       });
+    }
+  }
+
+  // 2.1 POST /api/razorpay/create-qr
+  if (method === 'POST' && normalizedPath === '/razorpay/create-qr') {
+    try {
+      const body = JSON.parse(event.body || '{}');
+      const rawPlan = body.planId || body.plan;
+      const planId = rawPlan === 'basic' || rawPlan === 'premium' ? rawPlan : null;
+      const { studentId, studentName, email, mobile } = body;
+
+      if (!studentId) {
+        return jsonResponse(400, { success: false, error: 'Student authentication required.' });
+      }
+
+      if (!planId) {
+        return jsonResponse(400, { success: false, error: 'Invalid plan selected. Choose basic (₹49) or premium (₹99).' });
+      }
+
+      const creds = getResolvedRazorpayCredentials();
+      if (!creds.isConfigured || !creds.keySecret) {
+        return jsonResponse(500, {
+          success: false,
+          error: 'Razorpay LIVE API credentials are not configured in production environment variables.'
+        });
+      }
+
+      const amountInPaise = planId === 'basic' ? 4900 : 9900;
+      const amountInRupees = planId === 'basic' ? 49 : 99;
+      const planTitle = planId === 'premium' ? 'PREMIUM PLAN – ₹99 – 90 Days' : 'STANDARD PLAN – ₹49 – 90 Days';
+      const authHeader = 'Basic ' + Buffer.from(`${creds.keyId}:${creds.keySecret}`).toString('base64');
+
+      const qrRes = await fetch('https://api.razorpay.com/v1/payments/qr_codes', {
+        method: 'POST',
+        headers: {
+          Authorization: authHeader,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          type: 'upi_qr',
+          name: 'Vacation Champions',
+          usage: 'single_use',
+          fixed_amount: true,
+          payment_amount: amountInPaise,
+          description: `${planTitle} • ${studentName || 'Student'}`,
+          notes: {
+            studentId: String(studentId).slice(0, 250),
+            studentName: String(studentName || 'Student').slice(0, 250),
+            email: String(email || '').slice(0, 250),
+            mobile: String(mobile || '').slice(0, 250),
+            planId: String(planId),
+            subscriptionTier: planId === 'premium' ? 'premium' : 'standard',
+            validityDays: '90'
+          }
+        })
+      });
+
+      const qrData = await qrRes.json().catch(() => null);
+
+      if (!qrRes.ok || !qrData || !qrData.id) {
+        const errorDesc = qrData?.error?.description || `Razorpay QR Code API returned HTTP ${qrRes.status}`;
+        return jsonResponse(502, {
+          success: false,
+          error: `${errorDesc}. (To enable UPI QR Codes, go to Razorpay Dashboard → Account & Settings → Payment Methods → Enable UPI QR Code).`
+        });
+      }
+
+      return jsonResponse(200, {
+        success: true,
+        qrId: qrData.id,
+        imageUrl: qrData.image_url,
+        amount: amountInPaise,
+        amountRupees: amountInRupees,
+        currency: 'INR',
+        planId,
+        planTitle,
+        status: qrData.status || 'active',
+        createdAt: qrData.created_at || Math.floor(Date.now() / 1000),
+        expiresInSeconds: 600,
+        keyId: creds.keyId
+      });
+    } catch (err) {
+      return jsonResponse(500, {
+        success: false,
+        error: err?.message || 'Error generating Razorpay QR code.'
+      });
+    }
+  }
+
+  // 2.2 GET /api/razorpay/qr-status/:qrId
+  if (method === 'GET' && normalizedPath.startsWith('/razorpay/qr-status/')) {
+    try {
+      const qrId = normalizedPath.replace('/razorpay/qr-status/', '').split('?')[0];
+      const params = event.queryStringParameters || {};
+      const { studentId, planId, studentName, email, mobile } = params;
+
+      const creds = getResolvedRazorpayCredentials();
+      if (!creds.isConfigured || !creds.keySecret) {
+        return jsonResponse(500, { success: false, error: 'Razorpay credentials not configured.' });
+      }
+
+      const authHeader = 'Basic ' + Buffer.from(`${creds.keyId}:${creds.keySecret}`).toString('base64');
+
+      // 1. Fetch QR status
+      const qrRes = await fetch(`https://api.razorpay.com/v1/payments/qr_codes/${encodeURIComponent(qrId)}`, {
+        headers: { Authorization: authHeader }
+      });
+      const qrData = await qrRes.json().catch(() => null);
+
+      if (!qrRes.ok || !qrData) {
+        return jsonResponse(502, { success: false, error: 'Unable to query QR code status from Razorpay.' });
+      }
+
+      const resolvedPlanId = planId || (qrData?.notes?.planId === 'premium' || Number(qrData?.payment_amount) >= 9900 ? 'premium' : 'basic');
+      const expectedAmountPaise = resolvedPlanId === 'premium' ? 9900 : 4900;
+      const amountRupees = resolvedPlanId === 'premium' ? 99 : 49;
+
+      // 2. Fetch payments received on this QR
+      const paymentsRes = await fetch(`https://api.razorpay.com/v1/payments/qr_codes/${encodeURIComponent(qrId)}/payments`, {
+        headers: { Authorization: authHeader }
+      });
+      const paymentsData = await paymentsRes.json().catch(() => null);
+      const items = Array.isArray(paymentsData?.items) ? paymentsData.items : [];
+
+      const successfulPayment = items.find(
+        (item) => (item.status === 'captured' || item.status === 'authorized') && Number(item.amount) >= expectedAmountPaise
+      );
+
+      if (successfulPayment) {
+        const paymentId = successfulPayment.id;
+        const now = new Date();
+        const startDateIso = now.toISOString().split('T')[0];
+        const expiryDate = new Date(now);
+        expiryDate.setDate(expiryDate.getDate() + 90);
+        const expiryDateIso = expiryDate.toISOString().split('T')[0];
+        const planTitle = resolvedPlanId === 'premium' ? 'PREMIUM PLAN – ₹99 – 90 Days' : 'STANDARD PLAN – ₹49 – 90 Days';
+        const receiptNumber = `REC-VC-${Date.now().toString().slice(-6)}`;
+
+        // Patch Firestore
+        await Promise.all([
+          patchFirestoreDocument('students', String(studentId), {
+            id: String(studentId),
+            plan: resolvedPlanId,
+            subscriptionTier: resolvedPlanId === 'premium' ? 'premium' : 'standard',
+            planLabel: planTitle,
+            isLifetimeFree: false,
+            planPurchasedAt: startDateIso,
+            planExpiresAt: expiryDateIso,
+            subscriptionValidityDays: 90,
+            subscriptionStatus: 'ACTIVE',
+            lastPaymentId: paymentId,
+            lastOrderId: qrId,
+            lastPaymentAmountInr: amountRupees,
+            subscriptionUpdatedAt: now.toISOString()
+          }),
+          patchFirestoreDocument('transactions', `tx_${paymentId}`, {
+            id: `tx_${paymentId}`,
+            receiptNumber,
+            studentId: String(studentId),
+            studentName: String(studentName || 'Student'),
+            parentEmail: String(email || ''),
+            parentMobile: String(mobile || ''),
+            planId: resolvedPlanId,
+            planTitle,
+            amount: amountRupees,
+            currency: 'INR',
+            orderId: qrId,
+            paymentId,
+            signature: `qr_verified_${paymentId}`,
+            method: 'UPI',
+            status: 'SUCCESS',
+            createdAt: now.toISOString(),
+            membershipStartDate: startDateIso,
+            membershipExpiryDate: expiryDateIso
+          })
+        ]);
+
+        return jsonResponse(200, {
+          success: true,
+          paid: true,
+          status: 'PAID',
+          paymentId,
+          orderId: qrId,
+          method: 'UPI',
+          amount: amountRupees,
+          transaction: {
+            id: `tx_${paymentId}`,
+            receiptNumber,
+            studentId: String(studentId),
+            studentName: String(studentName || 'Student'),
+            planId: resolvedPlanId,
+            planTitle,
+            amount: amountRupees,
+            orderId: qrId,
+            paymentId,
+            method: 'UPI',
+            status: 'SUCCESS',
+            membershipStartDate: startDateIso,
+            membershipExpiryDate: expiryDateIso
+          },
+          membership: {
+            membershipId: `mem_${paymentId}`,
+            studentId: String(studentId),
+            studentName: String(studentName || 'Student'),
+            planId: resolvedPlanId,
+            planTitle,
+            amount: amountRupees,
+            startDate: startDateIso,
+            expiryDate: expiryDateIso,
+            status: 'ACTIVE',
+            paymentId,
+            orderId: qrId,
+            daysRemaining: 90
+          }
+        });
+      }
+
+      if (qrData.status === 'closed') {
+        return jsonResponse(200, {
+          success: true,
+          paid: false,
+          status: 'EXPIRED',
+          message: 'QR code has expired. Please generate a new QR code.'
+        });
+      }
+
+      return jsonResponse(200, {
+        success: true,
+        paid: false,
+        status: 'WAITING',
+        message: 'Waiting for UPI payment confirmation...'
+      });
+    } catch (err) {
+      return jsonResponse(500, { success: false, error: err?.message || 'Error checking QR status.' });
     }
   }
 
@@ -771,6 +1007,44 @@ export async function handler(event) {
       success: true,
       transactions: transactionLedger
     });
+  }
+
+  // 9. POST /api/ai/chat
+  if (method === 'POST' && normalizedPath === '/ai/chat') {
+    try {
+      const body = JSON.parse(event.body || '{}');
+      const message = body.message || '';
+      const language = body.language || 'en';
+      let reply = 'Welcome to Vacation Champions! We provide 14 school curriculum subjects, 45+ audio moral stories, and scholarship practice.';
+      const q = message.toLowerCase();
+      if (q.includes('plan') || q.includes('price') || q.includes('subscription') || q.includes('49') || q.includes('99') || q.includes('शुल्क')) {
+        reply = language === 'mr' 
+          ? 'व्हेकेशन चॅम्पियन्सवर ३ प्लॅन्स आहेत: १) मोफत प्लॅन (₹०) २) स्टँडर्ड प्लॅन (₹४९, पूर्ण ९० दिवस) ३) प्रीमियम प्लॅन (₹९९, पूर्ण ९० दिवस - सर्व फिचर्स अनलॉक).'
+          : language === 'hi'
+          ? 'वेकेशन चैंपियंस में ३ प्लान हैं: १) फ्री प्लान (₹०) २) स्टैंडर्ड प्लान (₹४९, ९० दिन) ३) प्रीमियम प्लान (₹९९, ९० दिन - सभी फीचर्स).'
+          : 'Vacation Champions offers: 1) FREE Plan (₹0) 2) Standard Plan (₹49 for 90 days) 3) Premium Plan (₹99 for 90 days with full unlock).';
+      } else if (q.includes('pay') || q.includes('qr') || q.includes('razorpay') || q.includes('पेमेंट')) {
+        reply = language === 'mr'
+          ? 'तुम्ही अधिकृत Razorpay किंवा UPI QR कोड द्वारे Google Pay, PhonePe किंवा Paytm ने सुरक्षित पेमेंट करू शकता.'
+          : language === 'hi'
+          ? 'आप Razorpay ऑनलाइन या UPI QR कोड से Google Pay, PhonePe या Paytm द्वारा भुगतान कर सकते हैं।'
+          : 'You can pay securely via Razorpay Checkout or Dynamic UPI QR Code using Google Pay, PhonePe, or Paytm.';
+      } else if (q.includes('help') || q.includes('support') || q.includes('ticket') || q.includes('तक्रार') || q.includes('मदत')) {
+        reply = language === 'mr'
+          ? 'मदतीसाठी हेल्प अँड सपोर्ट विभागात तिकीट (TKT-VC-XXXXX) किंवा तक्रार निवारण विभागात तक्रार नोंदवा.'
+          : language === 'hi'
+          ? 'सहायता के लिए हेल्प एंड सपोर्ट पेज पर टिकट या ग्रीवेंस रिड्रेसल में शिकायत दर्ज करें।'
+          : 'For assistance, create a support ticket (TKT-VC-XXXXX) or lodge a formal grievance (GRV-VC-XXXXX).';
+      }
+      return jsonResponse(200, {
+        success: true,
+        reply,
+        source: 'knowledge_base_fallback',
+        language
+      });
+    } catch (err) {
+      return jsonResponse(500, { success: false, error: err?.message });
+    }
   }
 
   return jsonResponse(404, {

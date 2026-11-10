@@ -23,6 +23,8 @@ import {
   getResolvedRazorpayCredentials,
   createRazorpayClient,
   createRazorpayOrderBackend,
+  createRazorpayQrCodeBackend,
+  checkRazorpayQrCodeStatusBackend,
   verifyRazorpayWebhookSignature,
   updateStudentSubscriptionInFirestoreBackend
 } from './firebase/index.ts';
@@ -35,6 +37,7 @@ import {
   fetchRazorpayPaymentById,
   verifyAndConfirmCapturedPayment
 } from './src/server/razorpayPaymentStatusService.ts';
+import { processAiChatMessage } from './src/server/aiChatService.ts';
 
 dotenv.config();
 
@@ -166,13 +169,15 @@ app.get('/api/razorpay/config', (_req: Request, res: Response) => {
 // 2. Create Order endpoint - Server-authoritative pricing (4900 paise or 9900 paise)
 app.post('/api/razorpay/create-order', async (req: Request, res: Response) => {
   try {
-    const { planId, studentId, studentName, email, mobile, useTestSandbox } = req.body;
+    const rawPlan = req.body.planId || req.body.plan;
+    const planId = rawPlan === 'basic' || rawPlan === 'premium' ? rawPlan : null;
+    const { studentId, studentName, email, mobile } = req.body;
 
     if (!studentId) {
       return res.status(400).json({ success: false, error: 'Student authentication required.' });
     }
 
-    if (planId !== 'basic' && planId !== 'premium') {
+    if (!planId) {
       return res.status(400).json({ success: false, error: 'Invalid plan selected. Choose basic (₹49) or premium (₹99).' });
     }
 
@@ -198,6 +203,69 @@ app.post('/api/razorpay/create-order', async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('[Create Order Error]:', error);
     return res.status(500).json({ success: false, error: 'Internal server error during order creation.' });
+  }
+});
+
+// 2.1 Dynamic Razorpay UPI QR Code creation endpoint (₹49 Standard / ₹99 Premium)
+app.post('/api/razorpay/create-qr', async (req: Request, res: Response) => {
+  try {
+    const rawPlan = req.body.planId || req.body.plan;
+    const planId = rawPlan === 'basic' || rawPlan === 'premium' ? rawPlan : null;
+    const { studentId, studentName, email, mobile } = req.body;
+
+    if (!studentId) {
+      return res.status(400).json({ success: false, error: 'Student authentication required.' });
+    }
+
+    if (!planId) {
+      return res.status(400).json({ success: false, error: 'Invalid plan selected. Choose basic (₹49) or premium (₹99).' });
+    }
+
+    const qrPayload = await createRazorpayQrCodeBackend({
+      planId,
+      studentId: String(studentId),
+      studentName,
+      email,
+      mobile
+    });
+
+    console.log(`[Razorpay QR] Dynamic QR code created: ${qrPayload.qrId} for student ${studentId} (₹${qrPayload.amountRupees})`);
+    return res.json(qrPayload);
+  } catch (error: any) {
+    console.error('[Create QR Error]:', error);
+    return res.status(502).json({
+      success: false,
+      error: error?.message || 'Razorpay QR Code creation failed.'
+    });
+  }
+});
+
+// 2.2 Live QR Code payment status polling endpoint
+app.get('/api/razorpay/qr-status/:qrId', async (req: Request, res: Response) => {
+  try {
+    const { qrId } = req.params;
+    const { studentId, planId, studentName, email, mobile } = req.query as Record<string, string>;
+
+    if (!qrId) {
+      return res.status(400).json({ success: false, error: 'QR Code ID is required.' });
+    }
+
+    const statusResult = await checkRazorpayQrCodeStatusBackend({
+      qrId: String(qrId),
+      studentId: String(studentId || 'student'),
+      planId: planId as 'basic' | 'premium',
+      studentName,
+      email,
+      mobile
+    });
+
+    return res.json(statusResult);
+  } catch (error: any) {
+    console.error('[Check QR Status Error]:', error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to check QR code payment status.'
+    });
   }
 });
 
@@ -1158,6 +1226,28 @@ app.post('/api/subscription/verify-access', (req: Request, res: Response) => {
   }
 
   return res.json({ success: true, allowed: true, effectivePlan });
+});
+
+// AI Chatbot endpoint (Trilingual gemini-3.8-flash with offline / quota fallback)
+app.post('/api/ai/chat', async (req: Request, res: Response) => {
+  try {
+    const { message, history, language, studentContext } = req.body;
+    const result = await processAiChatMessage({
+      message,
+      history,
+      language,
+      studentContext
+    });
+    return res.json({ success: true, ...result });
+  } catch (error: any) {
+    console.error('[AI Chat API error]:', error);
+    return res.status(500).json({
+      success: false,
+      reply: 'An error occurred while generating a response. Please try again or check Help & Support.',
+      source: 'knowledge_base_fallback',
+      language: req.body?.language || 'en'
+    });
+  }
 });
 
 // Setup Vite or static serving

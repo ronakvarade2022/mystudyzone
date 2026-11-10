@@ -27,6 +27,7 @@ import {
 
 import { canAccessSubject } from '../utils/subscriptionAccess';
 import { PlanUpgradePromptModal } from './PlanUpgradePromptModal';
+import { ReportQuestionModal } from './ReportQuestionModal';
 
 interface SubjectQuizViewProps {
   initialSubject?: SubjectName;
@@ -143,6 +144,8 @@ export const SubjectQuizView: React.FC<SubjectQuizViewProps> = ({
 
   // Subject switch confirmation modal state
   const [pendingSubjectSwitch, setPendingSubjectSwitch] = useState<SubjectName | null>(null);
+  // Report question modal state
+  const [reportingQuestion, setReportingQuestion] = useState<QuizQuestion | null>(null);
   // Locked subject upgrade prompt state
   const [lockedSubjectPrompt, setLockedSubjectPrompt] = useState<{
     isOpen: boolean;
@@ -693,9 +696,20 @@ export const SubjectQuizView: React.FC<SubjectQuizViewProps> = ({
                     <span>{currentQ.topic}</span>
                   </span>
                 )}
-                <span className="text-[10px] font-mono text-slate-400 ml-auto">
-                  ID: {currentQ.id}
-                </span>
+                <div className="ml-auto flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-slate-400">
+                    ID: {currentQ.id}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setReportingQuestion(currentQ)}
+                    className="text-[10px] font-bold text-amber-900 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-lg flex items-center gap-1 cursor-pointer transition-colors"
+                    title="Report question or answer inaccuracy"
+                  >
+                    <AlertTriangle className="w-3 h-3 text-amber-600" />
+                    <span>Report Issue</span>
+                  </button>
+                </div>
               </div>
 
               {/* Diagram / Emoji Visual Presentation */}
@@ -777,9 +791,18 @@ export const SubjectQuizView: React.FC<SubjectQuizViewProps> = ({
               </div>
             )}
 
-            {/* Next Question / Finish Button */}
+            {/* Next Question / Finish Button & Report Option */}
             {isAnswerChecked && (
-              <div className="flex justify-end pt-2">
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  onClick={() => setReportingQuestion(currentQ)}
+                  className="text-xs font-bold text-slate-500 hover:text-amber-800 flex items-center gap-1.5 cursor-pointer transition-colors"
+                  title="Report mistake or ambiguity in this question"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Report Question / Answer</span>
+                </button>
                 <button
                   onClick={handleNextQuestion}
                   className="px-6 py-3 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer"
@@ -1009,6 +1032,27 @@ export const SubjectQuizView: React.FC<SubjectQuizViewProps> = ({
           onOpenMembership?.(plan);
         }}
       />
+
+      {/* REPORT QUESTION ERROR MODAL */}
+      {reportingQuestion && (
+        <ReportQuestionModal
+          isOpen={!!reportingQuestion}
+          onClose={() => setReportingQuestion(null)}
+          questionId={reportingQuestion.id}
+          questionText={reportingQuestion.questionText}
+          subject={selectedSubject}
+          classLevel={currentStudent.classLevel}
+          selectedAnswer={
+            selectedOption !== null && selectedOption >= 0 && reportingQuestion.options[selectedOption]
+              ? reportingQuestion.options[selectedOption]
+              : undefined
+          }
+          correctAnswer={reportingQuestion.options[reportingQuestion.correctIndex]}
+          studentId={currentStudent.id}
+          studentName={currentStudent.name}
+          studentEmail={currentStudent.email}
+        />
+      )}
     </div>
   );
 };

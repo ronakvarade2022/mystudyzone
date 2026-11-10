@@ -370,4 +370,5 @@ export interface InAppNotification {
 }
 
 export * from './referral';
+export * from './support';
 

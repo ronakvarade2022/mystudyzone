@@ -21,9 +21,14 @@ import {
   LogOut,
   ArrowRight,
   Crown,
-  RefreshCw
+  RefreshCw,
+  LifeBuoy,
+  HelpCircle,
+  Scale,
+  AlertTriangle,
+  Info,
+  Bot
 } from 'lucide-react';
-import { LogoutConfirmModal } from './LogoutConfirmModal';
 import { getStudentPlanInfo } from '../utils/subscriptionAccess';
 
 interface StudentProfileViewProps {
@@ -46,8 +51,6 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
     savedDrawings
   } = useApp();
 
-  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-
   if (!currentStudent) return null;
 
   const studentAttempts = allAttempts.filter(a => a.studentId === currentStudent.id);
@@ -57,18 +60,40 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-20 animate-in fade-in duration-200">
+      {/* 1. Clear Profile Title Header with Icon & Direct Sign Out Button */}
+      <div className="bg-white rounded-3xl p-4 sm:p-5 border-2 border-amber-300 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center shadow-md shadow-amber-500/20 shrink-0">
+            <User className="w-6 h-6" />
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl sm:text-2xl font-display font-black text-slate-900 tracking-tight">
+                Student Profile
+              </h1>
+              <span className="text-xs font-bold text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-200">
+                (विद्यार्थी प्रोफाइल)
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              Account UID: <span className="font-mono font-bold text-slate-700">{currentStudent.id}</span> • Registered Class: <strong className="text-slate-800">{currentStudent.classLevel}</strong>
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Profile Page Header Banner */}
       <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 rounded-3xl p-6 sm:p-8 text-white shadow-lg shadow-orange-500/15">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
           <div className="flex items-center gap-4">
-            <div className="w-20 h-20 rounded-3xl bg-white/20 backdrop-blur-md flex items-center justify-center text-5xl shadow-inner border border-white/25">
+            <div className="w-20 h-20 rounded-3xl bg-white/20 backdrop-blur-md flex items-center justify-center text-5xl shadow-inner border border-white/25 shrink-0">
               {currentStudent.avatar || '🦁'}
             </div>
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-2xl sm:text-3xl font-display font-extrabold tracking-tight">
+                <h2 className="text-2xl sm:text-3xl font-display font-extrabold tracking-tight">
                   {currentStudent.name}
-                </h1>
+                </h2>
                 <span className="px-3 py-0.5 rounded-full bg-white/20 text-white font-extrabold text-xs border border-white/25">
                   {currentStudent.classLevel}
                 </span>
@@ -87,7 +112,7 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
                     : 'bg-black/25 text-amber-100 border border-white/25'
                 }`}>
                   <CheckCircle className="w-3 h-3" />
-                  <span>{currentStudent.isPhoneVerified ? 'Phone OTP Verified' : 'Phone Registered (Not OTP-Verified)'}</span>
+                  <span>{currentStudent.isPhoneVerified ? 'Phone OTP Verified' : 'Phone Registered'}</span>
                 </span>
                 <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1 shadow-2xs ${
                   currentStudent.isEmailVerified
@@ -104,21 +129,268 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
             </div>
           </div>
 
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 self-start sm:self-center shrink-0">
+            <button
+              onClick={() => onOpenMembership(planInfo.effectivePlan === 'basic' ? 'premium' : 'premium')}
+              className="px-4 py-2.5 rounded-2xl bg-white text-amber-900 font-extrabold text-xs shadow-md hover:bg-amber-50 transition-all cursor-pointer"
+            >
+              {planInfo.isPaidPlanExpired
+                ? 'Renew Subscription (90 Days)'
+                : planInfo.effectivePlan === 'premium'
+                ? 'Extend Premium (90 Days)'
+                : 'Upgrade Plan (₹49 / ₹99)'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Complete & Professional 13-Option Profile & Information Directory */}
+      <div className="bg-white rounded-3xl p-6 sm:p-8 border-2 border-amber-300 shadow-sm space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center text-sm font-black shadow-xs">
+                13
+              </span>
+              <h2 className="text-lg sm:text-xl font-display font-extrabold text-slate-900">
+                Student Portal, Help &amp; Information Centre
+              </h2>
+            </div>
+            <p className="text-xs text-slate-500 font-medium mt-1">
+              All 13 official sections for profile management, support tickets, legal disclaimers, and grievance redressal.
+            </p>
+          </div>
+          <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-100 px-3 py-1 rounded-full self-start sm:self-auto border border-amber-200">
+            Official Directory
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {/* 1. My Profile */}
           <button
-            onClick={() => onOpenMembership(planInfo.effectivePlan === 'basic' ? 'premium' : 'premium')}
-            className="self-start sm:self-center px-4 py-2.5 rounded-2xl bg-white text-amber-900 font-extrabold text-xs shadow-md hover:bg-amber-50 transition-all cursor-pointer shrink-0"
+            type="button"
+            onClick={() => {
+              const el = document.getElementById('section-profile-stats');
+              el?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-xs hover:shadow-md transition-all text-left flex items-start gap-3 cursor-pointer group"
           >
-            {planInfo.isPaidPlanExpired
-              ? 'Renew Subscription (90 Days)'
-              : planInfo.effectivePlan === 'premium'
-              ? 'Extend Premium (90 Days)'
-              : 'Upgrade Plan (₹49 / ₹99)'}
+            <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+              <User className="w-4 h-4 text-white" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-bold text-amber-100 uppercase block">Section 1</span>
+              <p className="font-extrabold text-xs text-white truncate">1. My Profile (माझी प्रोफाइल)</p>
+              <p className="text-[11px] text-amber-100/90 truncate">Points, streak, badges &amp; level</p>
+            </div>
+          </button>
+
+          {/* 2. My Account */}
+          <button
+            type="button"
+            onClick={() => {
+              const el = document.getElementById('section-credentials');
+              el?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            className="p-3.5 rounded-2xl bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 transition-all text-left flex items-start gap-3 cursor-pointer group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+              <ShieldCheck className="w-4 h-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase block">Section 2</span>
+              <p className="font-extrabold text-xs text-slate-900 truncate">2. My Account (माझे खाते)</p>
+              <p className="text-[11px] text-slate-500 truncate">Verified credentials &amp; school</p>
+            </div>
+          </button>
+
+          {/* 3. My Subscription / Plan Details */}
+          <button
+            type="button"
+            onClick={() => onOpenMembership('premium')}
+            className="p-3.5 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-300 transition-all text-left flex items-start gap-3 cursor-pointer group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-amber-200 text-amber-900 flex items-center justify-center shrink-0">
+              <Crown className="w-4 h-4 text-amber-700" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-bold text-amber-700 uppercase block">Section 3</span>
+              <p className="font-extrabold text-xs text-amber-950 truncate">3. My Subscription (₹49 / ₹99)</p>
+              <p className="text-[11px] text-amber-800 truncate">90-Day plan status &amp; renewal</p>
+            </div>
+          </button>
+
+          {/* 4. Help & Support */}
+          <button
+            type="button"
+            onClick={() => onNavigateTab('help-support')}
+            className="p-3.5 rounded-2xl bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 transition-all text-left flex items-start gap-3 cursor-pointer group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+              <LifeBuoy className="w-4 h-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase block">Section 4</span>
+              <p className="font-extrabold text-xs text-slate-900 truncate">4. Help &amp; Support (मदत केंद्र)</p>
+              <p className="text-[11px] text-slate-500 truncate">Submit ticket &amp; track status</p>
+            </div>
+          </button>
+
+          {/* 5. FAQs */}
+          <button
+            type="button"
+            onClick={() => onNavigateTab('faqs')}
+            className="p-3.5 rounded-2xl bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 transition-all text-left flex items-start gap-3 cursor-pointer group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
+              <HelpCircle className="w-4 h-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase block">Section 5</span>
+              <p className="font-extrabold text-xs text-slate-900 truncate">5. FAQs (नेहमीचे प्रश्न)</p>
+              <p className="text-[11px] text-slate-500 truncate">Answers to common questions</p>
+            </div>
+          </button>
+
+          {/* 6. Terms & Conditions */}
+          <button
+            type="button"
+            onClick={() => onNavigateTab('terms')}
+            className="p-3.5 rounded-2xl bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 transition-all text-left flex items-start gap-3 cursor-pointer group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-slate-200 text-slate-700 flex items-center justify-center shrink-0">
+              <FileText className="w-4 h-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase block">Section 6</span>
+              <p className="font-extrabold text-xs text-slate-900 truncate">6. Terms &amp; Conditions</p>
+              <p className="text-[11px] text-slate-500 truncate">7-point educational disclaimer</p>
+            </div>
+          </button>
+
+          {/* 7. Privacy Policy */}
+          <button
+            type="button"
+            onClick={() => onNavigateTab('privacy')}
+            className="p-3.5 rounded-2xl bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 transition-all text-left flex items-start gap-3 cursor-pointer group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+              <Lock className="w-4 h-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase block">Section 7</span>
+              <p className="font-extrabold text-xs text-slate-900 truncate">7. Privacy Policy (गोपनीयता)</p>
+              <p className="text-[11px] text-slate-500 truncate">Child data &amp; Razorpay security</p>
+            </div>
+          </button>
+
+          {/* 8. Disclaimer */}
+          <button
+            type="button"
+            onClick={() => onNavigateTab('disclaimer')}
+            className="p-3.5 rounded-2xl bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 transition-all text-left flex items-start gap-3 cursor-pointer group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-4 h-4 text-amber-600" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase block">Section 8</span>
+              <p className="font-extrabold text-xs text-slate-900 truncate">8. Disclaimer (अस्वीकरण)</p>
+              <p className="text-[11px] text-slate-500 truncate">Official academic notice</p>
+            </div>
+          </button>
+
+          {/* 9. Grievance Redressal */}
+          <button
+            type="button"
+            onClick={() => onNavigateTab('grievance')}
+            className="p-3.5 rounded-2xl bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 transition-all text-left flex items-start gap-3 cursor-pointer group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-800 flex items-center justify-center shrink-0">
+              <Scale className="w-4 h-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase block">Section 9</span>
+              <p className="font-extrabold text-xs text-slate-900 truncate">9. Grievance Redressal</p>
+              <p className="text-[11px] text-slate-500 truncate">Report incorrect content &amp; track</p>
+            </div>
+          </button>
+
+          {/* 10. About Us */}
+          <button
+            type="button"
+            onClick={() => onNavigateTab('about')}
+            className="p-3.5 rounded-2xl bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 transition-all text-left flex items-start gap-3 cursor-pointer group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+              <Info className="w-4 h-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase block">Section 10</span>
+              <p className="font-extrabold text-xs text-slate-900 truncate">10. About Us (आमच्याबद्दल)</p>
+              <p className="text-[11px] text-slate-500 truncate">Mission &amp; 14 school subjects</p>
+            </div>
+          </button>
+
+          {/* 11. Contact Us */}
+          <button
+            type="button"
+            onClick={() => onNavigateTab('contact')}
+            className="p-3.5 rounded-2xl bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 transition-all text-left flex items-start gap-3 cursor-pointer group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+              <Mail className="w-4 h-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase block">Section 11</span>
+              <p className="font-extrabold text-xs text-slate-900 truncate">11. Contact Us (संपर्क करा)</p>
+              <p className="text-[11px] text-slate-500 truncate">Helpline, email &amp; hours</p>
+            </div>
+          </button>
+
+          {/* 12. AI Help Assistant */}
+          <button
+            type="button"
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('open-ai-chat'));
+            }}
+            className="p-3.5 rounded-2xl bg-purple-50 hover:bg-purple-100 border border-purple-200 transition-all text-left flex items-start gap-3 cursor-pointer group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-purple-200 text-purple-900 flex items-center justify-center shrink-0">
+              <Bot className="w-4 h-4 text-purple-700" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-purple-700 uppercase">Section 12</span>
+                <span className="px-1.5 py-0.2 rounded-full bg-purple-200 text-purple-900 text-[9px] font-black uppercase">Free</span>
+              </div>
+              <p className="font-extrabold text-xs text-purple-950 truncate">12. AI Help Assistant</p>
+              <p className="text-[11px] text-purple-800 truncate">Trilingual study helper</p>
+            </div>
+          </button>
+
+          {/* 13. Logout */}
+          <button
+            type="button"
+            onClick={async () => {
+              await logout();
+            }}
+            className="p-3.5 rounded-2xl bg-red-50 hover:bg-red-100 border border-red-200 transition-all text-left flex items-start gap-3 cursor-pointer group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-red-600 text-white flex items-center justify-center shrink-0">
+              <LogOut className="w-4 h-4 text-white" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-bold text-red-500 uppercase block">Section 13</span>
+              <p className="font-extrabold text-xs text-red-700 truncate">13. Sign Out (लॉग आउट)</p>
+              <p className="text-[11px] text-red-500 truncate">Securely end current session</p>
+            </div>
           </button>
         </div>
       </div>
 
       {/* 0. Account Subscription Status & 3-Plan Validity Overview (Synchronized with Firebase) */}
-      <div className="bg-white rounded-3xl p-6 sm:p-8 border-2 border-amber-200/90 shadow-xs space-y-5">
+      <div id="section-subscription" className="bg-white rounded-3xl p-6 sm:p-8 border-2 border-amber-200/90 shadow-xs space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -251,7 +523,7 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
       </div>
 
       {/* 1. Official Credentials & Verification Details */}
-      <div className="bg-white rounded-3xl p-6 sm:p-8 border border-amber-200/80 shadow-xs space-y-5">
+      <div id="section-credentials" className="bg-white rounded-3xl p-6 sm:p-8 border border-amber-200/80 shadow-xs space-y-5">
         <div className="border-b border-slate-100 pb-4">
           <h2 className="text-lg font-display font-bold text-slate-900 flex items-center gap-2">
             <User className="w-5 h-5 text-amber-600" />
@@ -359,7 +631,7 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
       </div>
 
       {/* 2. Learning Progress & Achievement Summary */}
-      <div className="bg-white rounded-3xl p-6 sm:p-8 border border-amber-200/80 shadow-xs space-y-5">
+      <div id="section-profile-stats" className="bg-white rounded-3xl p-6 sm:p-8 border border-amber-200/80 shadow-xs space-y-5">
         <div className="border-b border-slate-100 pb-4">
           <h2 className="text-lg font-display font-bold text-slate-900 flex items-center gap-2">
             <Trophy className="w-5 h-5 text-amber-600" />
@@ -686,7 +958,9 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
           {/* PROMINENT RED "SIGN OUT" BUTTON */}
           <button
             type="button"
-            onClick={() => setShowLogoutConfirm(true)}
+            onClick={async () => {
+              await logout();
+            }}
             className="w-full sm:w-auto min-h-[52px] px-8 py-3.5 rounded-2xl bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-extrabold text-sm tracking-wider uppercase shadow-lg shadow-red-600/25 transition-all flex items-center justify-center gap-2.5 cursor-pointer shrink-0"
           >
             <LogOut className="w-5 h-5 text-white" />
@@ -694,15 +968,6 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
           </button>
         </div>
       </div>
-
-      {/* Sign Out Confirmation Modal */}
-      <LogoutConfirmModal
-        isOpen={showLogoutConfirm}
-        onClose={() => setShowLogoutConfirm(false)}
-        onConfirm={logout}
-        accountName={`${currentStudent.name} (${currentStudent.classLevel})`}
-        roleTitle="Student Profile"
-      />
     </div>
   );
 };

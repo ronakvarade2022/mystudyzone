@@ -221,6 +221,233 @@ export function verifyRazorpaySignatureBackend(params: {
 }
 
 /**
+ * Cloud Function / Backend Handler: Create a Razorpay LIVE Dynamic UPI QR Code
+ * for ₹49 (Standard - 90 Days) or ₹99 (Premium - 90 Days).
+ * Uses Razorpay QR Code API (POST /v1/payments/qr_codes).
+ */
+export async function createRazorpayQrCodeBackend(params: {
+  planId: 'basic' | 'premium';
+  studentId: string;
+  studentName?: string;
+  email?: string;
+  mobile?: string;
+}) {
+  const { planId, studentId, studentName, email, mobile } = params;
+  if (!studentId) {
+    throw new Error('Student authentication required.');
+  }
+  if (planId !== 'basic' && planId !== 'premium') {
+    throw new Error('Invalid plan selected. Choose basic (₹49) or premium (₹99).');
+  }
+
+  const amountInPaise = planId === 'basic' ? 4900 : 9900;
+  const amountInRupees = planId === 'basic' ? 49 : 99;
+  const planTitle =
+    planId === 'premium'
+      ? 'PREMIUM PLAN – ₹99 – 90 Days'
+      : 'STANDARD PLAN – ₹49 – 90 Days';
+  const creds = getResolvedRazorpayCredentials();
+
+  if (!creds.isConfigured || !creds.keySecret) {
+    throw new Error('Razorpay LIVE API credentials are not configured on the server.');
+  }
+
+  const authHeader = 'Basic ' + Buffer.from(`${creds.keyId}:${creds.keySecret}`).toString('base64');
+
+  // Request Razorpay official QR code API
+  const qrRes = await fetch('https://api.razorpay.com/v1/payments/qr_codes', {
+    method: 'POST',
+    headers: {
+      Authorization: authHeader,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      type: 'upi_qr',
+      name: 'Vacation Champions',
+      usage: 'single_use',
+      fixed_amount: true,
+      payment_amount: amountInPaise,
+      description: `${planTitle} • ${studentName || 'Student'}`,
+      notes: {
+        studentId: String(studentId).slice(0, 250),
+        studentName: String(studentName || 'Student').slice(0, 250),
+        email: String(email || '').slice(0, 250),
+        mobile: String(mobile || '').slice(0, 250),
+        planId: String(planId),
+        subscriptionTier: planId === 'premium' ? 'premium' : 'standard',
+        validityDays: '90'
+      }
+    })
+  });
+
+  const qrData = await qrRes.json().catch(() => null);
+
+  if (!qrRes.ok || !qrData || !qrData.id) {
+    const errorDesc =
+      qrData?.error?.description || `Razorpay QR Code API returned HTTP ${qrRes.status}`;
+    console.warn('[Razorpay QR API Error]:', qrData?.error || errorDesc);
+    throw new Error(
+      `${errorDesc}. Note: If your Razorpay Live account does not have UPI QR enabled yet, please activate UPI QR Codes in Razorpay Dashboard → Account & Settings → Payment Methods → UPI QR.`
+    );
+  }
+
+  return {
+    success: true,
+    qrId: qrData.id,
+    imageUrl: qrData.image_url,
+    amount: amountInPaise,
+    amountRupees: amountInRupees,
+    currency: 'INR',
+    planId,
+    planTitle,
+    status: qrData.status || 'active',
+    createdAt: qrData.created_at || Math.floor(Date.now() / 1000),
+    expiresInSeconds: 600, // 10 minutes dynamic countdown
+    keyId: creds.keyId
+  };
+}
+
+/**
+ * Cloud Function / Backend Handler: Check the live payment status of a Razorpay QR Code.
+ * Queries Razorpay Payments API for payments received on this QR code.
+ * Upon successful payment, automatically activates the 90-day subscription in Firestore.
+ */
+export async function checkRazorpayQrCodeStatusBackend(params: {
+  qrId: string;
+  studentId: string;
+  planId?: 'basic' | 'premium';
+  studentName?: string;
+  email?: string;
+  mobile?: string;
+}) {
+  const { qrId, studentId, studentName, email, mobile } = params;
+  const creds = getResolvedRazorpayCredentials();
+
+  if (!creds.isConfigured || !creds.keySecret) {
+    throw new Error('Razorpay LIVE API credentials are not configured on the server.');
+  }
+
+  const authHeader = 'Basic ' + Buffer.from(`${creds.keyId}:${creds.keySecret}`).toString('base64');
+
+  // 1. Fetch QR code status from Razorpay
+  const qrRes = await fetch(
+    `https://api.razorpay.com/v1/payments/qr_codes/${encodeURIComponent(qrId)}`,
+    {
+      headers: { Authorization: authHeader }
+    }
+  );
+  const qrData = await qrRes.json().catch(() => null);
+
+  if (!qrRes.ok || !qrData) {
+    throw new Error('Unable to query QR code status from Razorpay API.');
+  }
+
+  const resolvedPlanId: 'basic' | 'premium' =
+    params.planId ||
+    (qrData?.notes?.planId === 'premium' || Number(qrData?.payment_amount) >= 9900
+      ? 'premium'
+      : 'basic');
+  const expectedAmountPaise = resolvedPlanId === 'premium' ? 9900 : 4900;
+  const amountRupees = resolvedPlanId === 'premium' ? 99 : 49;
+
+  // 2. Fetch payments received on this QR Code
+  const paymentsRes = await fetch(
+    `https://api.razorpay.com/v1/payments/qr_codes/${encodeURIComponent(qrId)}/payments`,
+    {
+      headers: { Authorization: authHeader }
+    }
+  );
+  const paymentsData = await paymentsRes.json().catch(() => null);
+  const items = Array.isArray(paymentsData?.items) ? paymentsData.items : [];
+
+  const successfulPayment = items.find(
+    (item: any) =>
+      (item.status === 'captured' || item.status === 'authorized') &&
+      Number(item.amount) >= expectedAmountPaise
+  );
+
+  if (successfulPayment) {
+    const paymentId = successfulPayment.id;
+    const orderId = qrId;
+    const method = String(successfulPayment.method || 'UPI').toUpperCase();
+
+    // Auto-update student document and transactions ledger in Firestore for 90 days!
+    const activation = await updateStudentSubscriptionInFirestoreBackend({
+      studentId: String(studentId),
+      studentName: String(studentName || qrData?.notes?.studentName || 'Student'),
+      email: String(email || qrData?.notes?.email || ''),
+      mobile: String(mobile || qrData?.notes?.mobile || ''),
+      planId: resolvedPlanId,
+      paymentId: String(paymentId),
+      orderId: String(orderId),
+      signature: `qr_verified_${paymentId}`,
+      method,
+      amountInr: amountRupees
+    });
+
+    return {
+      success: true,
+      paid: true,
+      status: 'PAID' as const,
+      paymentId,
+      orderId,
+      method,
+      amount: amountRupees,
+      transaction: {
+        id: `tx_${paymentId}`,
+        receiptNumber: activation.receiptNumber,
+        studentId: String(studentId),
+        studentName: String(studentName || 'Student'),
+        parentEmail: String(email || ''),
+        parentMobile: String(mobile || ''),
+        planId: resolvedPlanId,
+        planTitle: activation.planLabel,
+        amount: amountRupees,
+        currency: 'INR',
+        orderId,
+        paymentId,
+        signature: `qr_verified_${paymentId}`,
+        method,
+        status: 'SUCCESS' as const,
+        createdAt: new Date().toISOString(),
+        membershipStartDate: activation.startDateIso,
+        membershipExpiryDate: activation.expiryDateIso
+      },
+      membership: {
+        membershipId: `mem_${paymentId}`,
+        studentId: String(studentId),
+        studentName: String(studentName || 'Student'),
+        planId: resolvedPlanId,
+        planTitle: activation.planLabel,
+        amount: amountRupees,
+        startDate: activation.startDateIso,
+        expiryDate: activation.expiryDateIso,
+        status: 'ACTIVE' as const,
+        paymentId,
+        orderId,
+        daysRemaining: activation.daysRemaining
+      }
+    };
+  }
+
+  if (qrData.status === 'closed') {
+    return {
+      success: true,
+      paid: false,
+      status: 'EXPIRED' as const,
+      message: 'QR code has expired. Please click "Generate New QR Code" to proceed.'
+    };
+  }
+
+  return {
+    success: true,
+    paid: false,
+    status: 'WAITING' as const,
+    message: 'Waiting for UPI payment confirmation...'
+  };
+}
+
+/**
  * Verifies the Razorpay Webhook HMAC-SHA256 signature (`x-razorpay-signature`)
  * against the raw request body using timing-safe comparison to prevent fraud.
  */

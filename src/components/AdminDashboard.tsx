@@ -33,10 +33,12 @@ import {
   Palette,
   User,
   LogOut,
-  Gift
+  Gift,
+  LifeBuoy
 } from 'lucide-react';
 import { LogoutConfirmModal } from './LogoutConfirmModal';
 import { AdminReferralPanel } from './AdminReferralPanel';
+import { AdminSupportPanel } from './AdminSupportPanel';
 
 const ALL_CLASSES: ClassLevel[] = [
   'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8'
@@ -81,7 +83,7 @@ export const AdminDashboard: React.FC = () => {
   } = useApp();
 
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-  const [activeSection, setActiveSection] = useState<'students' | 'questions' | 'progression' | 'duplicates' | 'stories' | 'drawings' | 'payments' | 'referrals' | 'settings' | 'cricket' | 'scholarship' | 'profile'>('questions');
+  const [activeSection, setActiveSection] = useState<'students' | 'questions' | 'progression' | 'duplicates' | 'stories' | 'drawings' | 'payments' | 'referrals' | 'settings' | 'cricket' | 'scholarship' | 'support' | 'profile'>('questions');
   const [studentSearch, setStudentSearch] = useState<string>('');
   const [questionSearch, setQuestionSearch] = useState<string>('');
   const [filterClass, setFilterClass] = useState<string>('all');
@@ -326,6 +328,13 @@ export const AdminDashboard: React.FC = () => {
         >
           <Settings className="w-4 h-4" />
           <span>Timer & Platform Settings</span>
+        </button>
+        <button
+          onClick={() => setActiveSection('support')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-2 ${activeSection === 'support' ? 'bg-amber-600 text-white shadow-xs' : 'text-slate-700 hover:bg-amber-50'}`}
+        >
+          <LifeBuoy className="w-4 h-4" />
+          <span>Help, Grievance & Reports</span>
         </button>
         <button
           onClick={() => setActiveSection('profile')}
@@ -2174,6 +2183,9 @@ export const AdminDashboard: React.FC = () => {
 
       {/* SECTION: REFERRALS & REWARDS MANAGEMENT */}
       {activeSection === 'referrals' && <AdminReferralPanel />}
+
+      {/* SECTION: USER SUPPORT, GRIEVANCES & QUESTION REPORTS */}
+      {activeSection === 'support' && <AdminSupportPanel />}
 
       {/* SECTION: SUPERVISOR PROFILE SECTION (EXCLUSIVE LOGOUT BUTTON LOCATION) */}
       {activeSection === 'profile' && (

@@ -1193,6 +1193,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentUser(null);
     setActiveRole('student');
     setIsAuthModalOpen(true);
+
+    // Reset viewport scroll and prevent mobile zoom sticking
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      const vp = document.querySelector('meta[name="viewport"]');
+      if (vp) {
+        vp.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');
+      }
+    }
   };
 
   // Enforce Student & Parent Boundaries in Quick Switch

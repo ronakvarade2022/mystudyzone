@@ -184,5 +184,27 @@ service cloud.firestore {
       allow create: if isSignedIn() && incoming().userId == request.auth.uid;
       allow update, delete: if isAdmin();
     }
+
+    // 9. Collection: /support_tickets/{ticketId}
+    match /support_tickets/{ticketId} {
+      allow read: if true; // Support ticket lookup by unique ticket number
+      allow create: if true; // Open to registered and prospective students
+      allow update: if isAdmin() || (isSignedIn() && incoming().studentId == existing().studentId);
+      allow delete: if isAdmin();
+    }
+
+    // 10. Collection: /grievances/{grievanceId}
+    match /grievances/{grievanceId} {
+      allow read: if true; // Grievance tracking by unique reference ID
+      allow create: if true;
+      allow update, delete: if isAdmin();
+    }
+
+    // 11. Collection: /question_reports/{reportId}
+    match /question_reports/{reportId} {
+      allow read: if isAdmin() || isSignedIn();
+      allow create: if true; // Students can report erroneous quiz questions
+      allow update, delete: if isAdmin();
+    }
   }
 }
