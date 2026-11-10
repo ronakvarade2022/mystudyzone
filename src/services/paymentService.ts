@@ -12,18 +12,20 @@ export interface RazorpayConfigResponse {
 export interface CreateOrderResponse {
   success: boolean;
   orderId: string;
-  amount: number; // in paise
+  amount: number; // in paise (4900 or 9900)
   amountRupees: number;
   currency: string;
   keyId: string;
   receiptNumber: string;
   planId: 'basic' | 'premium';
   isMock?: boolean;
+  mode?: 'LIVE' | 'TEST';
   error?: string;
 }
 
 export interface VerifyPaymentResponse {
   success: boolean;
+  alreadyProcessed?: boolean;
   message?: string;
   transaction?: PaymentTransaction;
   membership?: {
@@ -67,17 +69,19 @@ export async function getRazorpayConfig(): Promise<RazorpayConfigResponse> {
   }
 }
 
-// 2. Request backend order creation (enforces server-side ₹49 / ₹99 pricing)
+// 2. Request backend order creation (enforces server-side ₹49 / 4900 paise & ₹99 / 9900 paise pricing)
 export async function createRazorpayOrder(
   student: StudentProfile,
-  planId: 'basic' | 'premium'
+  planId: 'basic' | 'premium',
+  options?: { useTestSandbox?: boolean }
 ): Promise<CreateOrderResponse> {
   const payload = {
     planId,
     studentId: student.id,
     studentName: student.name,
     email: student.email,
-    mobile: student.mobile
+    mobile: student.mobile,
+    useTestSandbox: Boolean(options?.useTestSandbox)
   };
 
   const res = await fetch('/api/razorpay/create-order', {
@@ -131,6 +135,12 @@ export function loadRazorpayScript(): Promise<boolean> {
     if (typeof window !== 'undefined' && (window as any).Razorpay) {
       return resolve(true);
     }
+    const existingScript = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+    if (existingScript) {
+      existingScript.addEventListener('load', () => resolve(true));
+      existingScript.addEventListener('error', () => resolve(false));
+      return;
+    }
     const script = document.createElement('script');
     script.src = 'https://checkout.razorpay.com/v1/checkout.js';
     script.async = true;
@@ -159,36 +169,70 @@ export async function launchRazorpayCheckout(options: {
   }
 
   const { orderData, student, planId, referralCode, onSuccess, onFailure } = options;
-  const planTitle = planId === 'premium' ? 'Champion Premium' : 'Champion Basic';
-  const planAmountRupees = planId === 'premium' ? 99 : 49;
+  const planTitle =
+    planId === 'premium'
+      ? 'PREMIUM PLAN – ₹99 – 90 Days'
+      : 'STANDARD PLAN – ₹49 – 90 Days';
+  const planAmountPaise = planId === 'premium' ? 9900 : 4900;
 
-  const rzpOptions = {
+  // Sanitize prefill fields so Razorpay Live Checkout never fails prefill validation
+  const cleanDigits = (student.mobile || '').replace(/\D/g, '').slice(-10);
+  const prefill: Record<string, string> = {};
+  if (student.name && student.name.trim()) {
+    prefill.name = student.name.trim();
+  }
+  if (student.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(student.email.trim())) {
+    prefill.email = student.email.trim();
+  }
+  if (cleanDigits.length === 10) {
+    prefill.contact = `+91${cleanDigits}`;
+  }
+
+  let hasSettled = false;
+
+  const rzpOptions: Record<string, any> = {
     key: orderData.keyId,
-    amount: orderData.amount, // in paise
-    currency: 'INR',
-    name: 'Champion Learning',
-    description: `${planTitle} (₹${planAmountRupees}) • 3 Months Access for ${student.name}`,
-    image: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
+    amount: orderData.amount || planAmountPaise, // in paise (4900 or 9900)
+    currency: orderData.currency || 'INR',
+    name: 'Vacation Champions',
+    description: `${planTitle} • ${student.name}`,
     order_id: orderData.orderId,
-    prefill: {
-      name: student.name,
-      email: student.email,
-      contact: student.mobile ? `+91${student.mobile.replace(/\D/g, '').slice(-10)}` : ''
-    },
+    prefill,
     notes: {
-      studentId: student.id,
-      studentName: student.name,
-      classLevel: student.classLevel,
-      planId,
+      studentId: String(student.id),
+      studentName: String(student.name),
+      classLevel: String(student.classLevel),
+      planId: String(planId),
+      validityDays: '90',
       referralCode: referralCode || ''
     },
+    retry: {
+      enabled: true,
+      max_count: 3
+    },
     theme: {
-      color: '#ea580c' // Champion Learning primary orange
+      color: '#ea580c'
     },
     modal: {
       ondismiss: function () {
+        if (hasSettled) return;
+        hasSettled = true;
         console.log('[Razorpay Modal] User closed checkout without completing payment.');
-        onFailure('Payment was cancelled before completion. No membership was activated.');
+        fetch('/api/razorpay/payment-failed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orderId: orderData.orderId,
+            paymentId: `cancelled_${Date.now()}`,
+            planId,
+            studentId: student.id,
+            studentName: student.name,
+            email: student.email,
+            mobile: student.mobile,
+            reason: 'Payment cancelled by user before completion'
+          })
+        }).catch(() => {});
+        onFailure('Payment was cancelled before completion. Your subscription was not charged or activated. You can retry anytime.');
       }
     },
     handler: async function (response: {
@@ -196,10 +240,12 @@ export async function launchRazorpayCheckout(options: {
       razorpay_order_id: string;
       razorpay_signature: string;
     }) {
+      if (hasSettled) return;
+      hasSettled = true;
       console.log('[Razorpay Handler Received]', response);
       try {
         const verifyRes = await verifyRazorpayPayment({
-          razorpay_order_id: response.razorpay_order_id,
+          razorpay_order_id: response.razorpay_order_id || orderData.orderId,
           razorpay_payment_id: response.razorpay_payment_id,
           razorpay_signature: response.razorpay_signature,
           planId,
@@ -225,9 +271,34 @@ export async function launchRazorpayCheckout(options: {
   try {
     const razorpayInstance = new (window as any).Razorpay(rzpOptions);
     razorpayInstance.on('payment.failed', function (response: any) {
-      console.error('[Razorpay Payment Failed Callback]:', response.error);
-      const desc = response.error?.description || response.error?.reason || 'Payment failed';
-      onFailure(`Payment Failed: ${desc} (Code: ${response.error?.code || 'UNKNOWN'})`);
+      if (hasSettled) return;
+      hasSettled = true;
+      console.error('[Razorpay Payment Failed Callback]:', response?.error);
+      const desc =
+        response?.error?.description ||
+        response?.error?.reason ||
+        'Payment was declined by bank or UPI provider';
+      const failedPaymentId =
+        response?.error?.metadata?.payment_id || `pay_failed_${Date.now()}`;
+      const failedOrderId =
+        response?.error?.metadata?.order_id || orderData.orderId;
+
+      fetch('/api/razorpay/payment-failed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId: failedOrderId,
+          paymentId: failedPaymentId,
+          planId,
+          studentId: student.id,
+          studentName: student.name,
+          email: student.email,
+          mobile: student.mobile,
+          reason: desc
+        })
+      }).catch(() => {});
+
+      onFailure(`Payment Failed: ${desc}. Subscription was not activated. Please retry payment.`);
     });
     razorpayInstance.open();
   } catch (err: any) {

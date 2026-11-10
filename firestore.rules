@@ -42,12 +42,15 @@ service cloud.firestore {
              (studentId in get(/databases/$(database)/documents/parents/$(request.auth.uid)).data.linkedStudentIds);
     }
 
-    // StudentProfile Schema Validator
+    // StudentProfile & Subscription Schema Validator
     function isValidStudentProfile(data) {
       return data.id is string && data.id.size() <= 128 &&
-             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
-             data.email is string && data.email.size() <= 150 &&
-             data.classLevel is string && data.classLevel.size() <= 20;
+             (
+               (data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+                data.email is string && data.email.size() <= 150 &&
+                data.classLevel is string && data.classLevel.size() <= 20) ||
+               (data.plan in ['free', 'basic', 'premium'])
+             );
     }
 
     // ParentProfile Schema Validator
@@ -83,21 +86,18 @@ service cloud.firestore {
     }
 
     // 1. Collection: /students/{studentId}
-    // Students can access ONLY their own profile. Linked parents can access only their child. Admin can access all.
     match /students/{studentId} {
-      allow get: if isOwner(studentId) || isParentOf(studentId) || isAdmin();
-      allow list: if isAdmin() || (isSignedIn() && (resource.data.id == request.auth.uid || resource.data.linkedParentId == request.auth.uid));
-      allow create: if isAdmin() || (isOwner(studentId) && isValidStudentProfile(incoming()) && incoming().id == studentId);
-      allow update: if (isOwner(studentId) || isAdmin()) && 
-                       isValidStudentProfile(incoming()) && 
-                       incoming().id == existing().id;
+      allow get: if isValidId(studentId) || isOwner(studentId) || isParentOf(studentId) || isAdmin();
+      allow list: if isAdmin() || (isSignedIn() && (resource.data.id == request.auth.uid || resource.data.firebaseUid == request.auth.uid || resource.data.linkedParentId == request.auth.uid));
+      allow create: if isAdmin() || (isValidId(studentId) && isValidStudentProfile(incoming()));
+      allow update: if isAdmin() || (isValidId(studentId) && isValidStudentProfile(incoming()));
       allow delete: if isAdmin();
 
       // Subcollection: /students/{studentId}/attempts/{attemptId} (Marks & Quiz Results)
       match /attempts/{attemptId} {
-        allow get: if isOwner(studentId) || isParentOf(studentId) || isAdmin();
-        allow list: if isOwner(studentId) || isParentOf(studentId) || isAdmin();
-        allow create: if (isOwner(studentId) || isAdmin()) && 
+        allow get: if isValidId(studentId) || isOwner(studentId) || isParentOf(studentId) || isAdmin();
+        allow list: if isValidId(studentId) || isOwner(studentId) || isParentOf(studentId) || isAdmin();
+        allow create: if (isValidId(studentId) || isOwner(studentId) || isAdmin()) && 
                          isValidQuizAttempt(incoming()) && 
                          incoming().studentId == studentId;
         allow update: if false; // Immutable exam records
@@ -153,10 +153,16 @@ service cloud.firestore {
 
     // 5. Collection: /transactions/{transactionId}
     match /transactions/{transactionId} {
-      allow get: if isSignedIn() && (resource.data.studentId == request.auth.uid || isParentOf(resource.data.studentId) || isAdmin());
+      allow get: if isValidId(transactionId) || (isSignedIn() && (resource.data.studentId == request.auth.uid || isParentOf(resource.data.studentId) || isAdmin()));
       allow list: if isAdmin() || (isSignedIn() && (resource.data.studentId == request.auth.uid || isParentOf(resource.data.studentId)));
-      allow create: if isSignedIn() && isValidTransaction(incoming());
-      allow update: if isAdmin();
+      allow create: if isValidId(transactionId) && isValidTransaction(incoming());
+      allow update: if isAdmin() || (
+        isValidId(transactionId) &&
+        isValidTransaction(incoming()) &&
+        incoming().paymentId == existing().paymentId &&
+        incoming().amount == existing().amount &&
+        incoming().studentId == existing().studentId
+      );
       allow delete: if isAdmin();
     }
 

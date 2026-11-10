@@ -660,6 +660,7 @@ export async function saveSubscriptionToFirestore(
   }
 ): Promise<{
   success: boolean;
+  alreadyActivated?: boolean;
   plan: 'free' | 'basic' | 'premium';
   planPurchasedAt: string;
   planExpiresAt: string | null;
@@ -687,14 +688,39 @@ export async function saveSubscriptionToFirestore(
 
   try {
     const studentRef = doc(db, 'students', studentId);
+
+    // Prevent duplicate subscription activation for the same paymentId
+    if (subscriptionData.paymentId) {
+      try {
+        const existingSnap = await getDoc(studentRef);
+        if (existingSnap.exists()) {
+          const existingData = existingSnap.data();
+          if (existingData?.lastPaymentId === subscriptionData.paymentId) {
+            return {
+              success: true,
+              alreadyActivated: true,
+              plan: subscriptionData.plan,
+              planPurchasedAt: existingData?.planPurchasedAt || planPurchasedAt,
+              planExpiresAt: existingData?.planExpiresAt || planExpiresAt,
+              validityDays,
+            };
+          }
+        }
+      } catch {
+        // Proceed with setDoc if read fails
+      }
+    }
+
     const cleanSub = JSON.parse(
       JSON.stringify({
+        id: studentId,
         plan: subscriptionData.plan,
         planLabel,
         isLifetimeFree: subscriptionData.plan === 'free',
         planPurchasedAt,
         planExpiresAt,
         subscriptionValidityDays: validityDays,
+        subscriptionStatus: 'ACTIVE',
         lastPaymentId: subscriptionData.paymentId || null,
         lastOrderId: subscriptionData.orderId || null,
         lastPaymentAmountInr: amountInr,
@@ -719,6 +745,56 @@ export async function saveSubscriptionToFirestore(
       validityDays,
       error,
     };
+  }
+}
+
+// 10a. Save Verified or Failed Razorpay Payment Transaction to Firestore (/transactions/{transactionId})
+export async function saveTransactionToFirestore(transaction: {
+  id: string;
+  receiptNumber: string;
+  studentId: string;
+  studentName: string;
+  parentEmail?: string;
+  parentMobile?: string;
+  planId: 'basic' | 'premium';
+  planTitle: string;
+  amount: number;
+  currency: string;
+  orderId: string;
+  paymentId: string;
+  signature: string;
+  method: string;
+  status: 'SUCCESS' | 'FAILED' | 'PENDING' | 'REFUNDED';
+  createdAt: string;
+  membershipStartDate?: string;
+  membershipExpiryDate?: string;
+}): Promise<{ success: boolean; id: string; error?: unknown }> {
+  // Deterministic document ID based on paymentId prevents duplicate transaction records
+  const safePaymentId = (transaction.paymentId || transaction.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+  const deterministicTxId = safePaymentId.startsWith('tx_') ? safePaymentId : `tx_${safePaymentId}`;
+
+  try {
+    const txRef = doc(db, 'transactions', deterministicTxId);
+    const cleanTx = JSON.parse(
+      JSON.stringify({
+        ...transaction,
+        id: deterministicTxId,
+        receiptNumber: String(transaction.receiptNumber || `REC-VC-${Date.now().toString().slice(-6)}`).slice(0, 50),
+        studentId: String(transaction.studentId).slice(0, 128),
+        studentName: String(transaction.studentName || 'Student').slice(0, 100),
+        parentEmail: String(transaction.parentEmail || '').slice(0, 150),
+        parentMobile: String(transaction.parentMobile || '').slice(0, 20),
+        amount: Number(transaction.amount) || (transaction.planId === 'premium' ? 99 : 49),
+        currency: 'INR',
+        status: transaction.status || 'SUCCESS',
+        savedToFirestoreAt: new Date().toISOString(),
+      })
+    );
+    await setDoc(txRef, cleanTx, { merge: true });
+    return { success: true, id: deterministicTxId };
+  } catch (error) {
+    console.warn('Firestore save transaction warning:', error);
+    return { success: false, id: deterministicTxId, error };
   }
 }
 

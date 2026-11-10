@@ -43,6 +43,7 @@ import {
   signOutFirebaseUser,
   saveStudentProfileToFirestore,
   saveSubscriptionToFirestore,
+  saveTransactionToFirestore,
   fetchStudentSubscriptionFromFirestore,
   computePaidPlanExpiryIsoDate
 } from '../services/firebase';
@@ -1860,7 +1861,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       simulateFailure
     );
 
-    setTransactions(prev => [result.transaction, ...prev]);
+    setTransactions(prev => [result.transaction, ...prev.filter(t => t.paymentId !== result.transaction.paymentId)]);
+    saveTransactionToFirestore(result.transaction).catch(() => {});
 
     if (result.success) {
       const computedDates = computePaidPlanExpiryIsoDate(student.planExpiresAt);
@@ -1924,6 +1926,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Automatic Verified Membership Activation (from Razorpay server verification)
   const activateVerifiedMembership = (transaction: PaymentTransaction, customExpiryDate?: string) => {
     const student = currentStudent || INITIAL_STUDENT;
+
+    // Prevent duplicate subscription activation or duplicate points for an already-processed payment
+    const alreadyProcessedLocally = transactions.some(
+      t =>
+        t.status === 'SUCCESS' &&
+        (t.paymentId === transaction.paymentId ||
+          (Boolean(transaction.orderId) && t.orderId === transaction.orderId))
+    );
+
+    if (alreadyProcessedLocally) {
+      saveTransactionToFirestore(transaction).catch(() => {});
+      return;
+    }
+
     const computedDates = computePaidPlanExpiryIsoDate(student.planExpiresAt);
     const resolvedExpiresAt = customExpiryDate || computedDates.expiresAt;
 
@@ -1945,6 +1961,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStudentsList(prev => prev.map(s => s.id === updatedStudent.id ? updatedStudent : s));
     setTransactions(prev => [transaction, ...prev.filter(t => t.paymentId !== transaction.paymentId)]);
 
+    saveTransactionToFirestore(transaction).catch(() => {});
     saveStudentProfileToFirestore(updatedStudent).catch(() => {});
     saveSubscriptionToFirestore(updatedStudent.id, {
       plan: transaction.planId,

@@ -57,7 +57,7 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
 
   const planInfo = getStudentPlanInfo(currentStudent);
 
-  // Step 1: Create Server Order & Launch Razorpay (or Integrated Verified Checkout)
+  // Step 1: Create Server Order & Launch Razorpay Checkout
   const handleInitiateCheckout = async (planOverride?: 'basic' | 'premium') => {
     const targetPlan = planOverride || selectedPlan;
     setSelectedPlan(targetPlan);
@@ -74,8 +74,7 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
     try {
       const orderData = await createRazorpayOrder(currentStudent, targetPlan);
 
-      // If running with mock/test keys in preview environment, open the built-in Razorpay Verified Checkout step
-      // so the user can test both Successful Payment Verification and Payment Failure without external key rejection.
+      // If running with sandbox/test keys only, open the built-in Razorpay Verified Checkout step
       if (orderData.isMock) {
         setPendingOrder(orderData);
         setStep('checkout');
@@ -88,10 +87,12 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
         planId: targetPlan,
         onSuccess: (verifyResult) => {
           if (verifyResult.success && verifyResult.transaction) {
-            activateVerifiedMembership(
-              verifyResult.transaction,
-              verifyResult.membership?.expiryDate
-            );
+            if (!verifyResult.alreadyProcessed) {
+              activateVerifiedMembership(
+                verifyResult.transaction,
+                verifyResult.membership?.expiryDate
+              );
+            }
             setLastTransaction(verifyResult.transaction);
             setExpiryDateStr(verifyResult.membership?.expiryDate || '');
             setDaysRemainingNum(verifyResult.membership?.daysRemaining || 90);
@@ -478,6 +479,30 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
                 </div>
               </div>
 
+              {/* Prominent Pay Now Action Bar for Selected Plan */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-950 text-white flex flex-col sm:flex-row items-center justify-between gap-4 shadow-lg">
+                <div className="text-center sm:text-left">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-300">
+                    SELECTED SUBSCRIPTION PLAN • RAZORPAY {gatewayMode} CHECKOUT
+                  </span>
+                  <h4 className="text-base sm:text-lg font-extrabold mt-0.5">
+                    {selectedPlan === 'premium'
+                      ? 'PREMIUM PLAN – ₹99 – 90 Days (Full Dashboard Unlock)'
+                      : 'STANDARD PLAN – ₹49 – 90 Days (14 Subjects + Stories + Drawing)'}
+                  </h4>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleInitiateCheckout(selectedPlan)}
+                  className="w-full sm:w-auto px-7 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-slate-950 font-black text-sm shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0"
+                >
+                  <ShieldCheck className="w-5 h-5" />
+                  <span>
+                    Pay Now – ₹{selectedPlan === 'premium' ? '99' : '49'} (90 Days)
+                  </span>
+                </button>
+              </div>
+
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-2.5 text-xs text-slate-600">
                   <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
@@ -677,16 +702,25 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
                 </p>
               </div>
 
-              <div className="flex gap-3 max-w-md mx-auto">
+              <div className="flex flex-wrap gap-3 max-w-md mx-auto">
                 <button
-                  onClick={() => setStep('select')}
-                  className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  type="button"
+                  onClick={() => handleInitiateCheckout(selectedPlan)}
+                  className="flex-1 py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
                 >
-                  <RefreshCw className="w-4 h-4" /> Try Payment Again
+                  <RefreshCw className="w-4 h-4" /> Retry Payment (₹{selectedPlan === 'premium' ? '99' : '49'})
                 </button>
                 <button
+                  type="button"
+                  onClick={() => setStep('select')}
+                  className="py-3 px-4 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-xs transition-all cursor-pointer"
+                >
+                  Change Plan
+                </button>
+                <button
+                  type="button"
                   onClick={resetModal}
-                  className="py-3 px-5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs transition-all cursor-pointer"
+                  className="py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs transition-all cursor-pointer"
                 >
                   Close
                 </button>
