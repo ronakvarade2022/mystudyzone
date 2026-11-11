@@ -118,8 +118,9 @@ export async function createRazorpayOrderBackend(params: {
   studentName?: string;
   email?: string;
   mobile?: string;
+  referralCode?: string;
 }) {
-  const { planId, studentId, studentName, email, mobile } = params;
+  const { planId, studentId, studentName, email, mobile, referralCode } = params;
 
   if (!studentId) {
     throw new Error('Student authentication required.');
@@ -154,7 +155,8 @@ export async function createRazorpayOrderBackend(params: {
       mobile: String(mobile || '').slice(0, 250),
       planId: String(planId),
       subscriptionTier: planId === 'premium' ? 'premium' : 'standard',
-      validityDays: '90'
+      validityDays: '90',
+      referralCode: String(referralCode || '').slice(0, 100)
     }
   });
 
@@ -231,8 +233,9 @@ export async function createRazorpayQrCodeBackend(params: {
   studentName?: string;
   email?: string;
   mobile?: string;
+  referralCode?: string;
 }) {
-  const { planId, studentId, studentName, email, mobile } = params;
+  const { planId, studentId, studentName, email, mobile, referralCode } = params;
   if (!studentId) {
     throw new Error('Student authentication required.');
   }
@@ -275,7 +278,8 @@ export async function createRazorpayQrCodeBackend(params: {
         mobile: String(mobile || '').slice(0, 250),
         planId: String(planId),
         subscriptionTier: planId === 'premium' ? 'premium' : 'standard',
-        validityDays: '90'
+        validityDays: '90',
+        referralCode: String(referralCode || '').slice(0, 100)
       }
     })
   });
@@ -303,7 +307,8 @@ export async function createRazorpayQrCodeBackend(params: {
     status: qrData.status || 'active',
     createdAt: qrData.created_at || Math.floor(Date.now() / 1000),
     expiresInSeconds: 600, // 10 minutes dynamic countdown
-    keyId: creds.keyId
+    keyId: creds.keyId,
+    referralCode: referralCode || ''
   };
 }
 
@@ -319,8 +324,9 @@ export async function checkRazorpayQrCodeStatusBackend(params: {
   studentName?: string;
   email?: string;
   mobile?: string;
+  referralCode?: string;
 }) {
-  const { qrId, studentId, studentName, email, mobile } = params;
+  const { qrId, studentId, studentName, email, mobile, referralCode } = params;
   const creds = getResolvedRazorpayCredentials();
 
   if (!creds.isConfigured || !creds.keySecret) {
@@ -426,7 +432,8 @@ export async function checkRazorpayQrCodeStatusBackend(params: {
         paymentId,
         orderId,
         daysRemaining: activation.daysRemaining
-      }
+      },
+      referralCode: referralCode || qrData?.notes?.referralCode || ''
     };
   }
 

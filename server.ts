@@ -38,6 +38,10 @@ import {
   verifyAndConfirmCapturedPayment
 } from './src/server/razorpayPaymentStatusService.ts';
 import { processAiChatMessage } from './src/server/aiChatService.ts';
+import {
+  verifyRazorpayXPayoutWebhookSignature,
+  processRazorpayXPayoutWebhookEvent
+} from './src/server/razorpayxPayoutService.ts';
 
 dotenv.config();
 
@@ -124,9 +128,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// 1. Raw body capture middleware specifically for Razorpay Webhooks
+// 1. Raw body capture middleware specifically for Razorpay & RazorpayX Webhooks
 app.use('/api/razorpay/webhook', express.raw({ type: 'application/json' }));
 app.use('/functions/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/razorpayx/webhook', express.raw({ type: 'application/json' }));
 
 // 2. Standard JSON parser for all other API endpoints
 app.use(express.json());
@@ -171,7 +176,7 @@ app.post('/api/razorpay/create-order', async (req: Request, res: Response) => {
   try {
     const rawPlan = req.body.planId || req.body.plan;
     const planId = rawPlan === 'basic' || rawPlan === 'premium' ? rawPlan : null;
-    const { studentId, studentName, email, mobile } = req.body;
+    const { studentId, studentName, email, mobile, referralCode } = req.body;
 
     if (!studentId) {
       return res.status(400).json({ success: false, error: 'Student authentication required.' });
@@ -187,7 +192,8 @@ app.post('/api/razorpay/create-order', async (req: Request, res: Response) => {
         studentId: String(studentId),
         studentName,
         email,
-        mobile
+        mobile,
+        referralCode: referralCode ? String(referralCode).trim() : undefined
       });
       console.log(
         `[Razorpay ${orderPayload.mode}] Created order: ${orderPayload.orderId} for student ${studentId} (₹${orderPayload.amountRupees} / ${orderPayload.amount} paise)`
@@ -211,7 +217,7 @@ app.post('/api/razorpay/create-qr', async (req: Request, res: Response) => {
   try {
     const rawPlan = req.body.planId || req.body.plan;
     const planId = rawPlan === 'basic' || rawPlan === 'premium' ? rawPlan : null;
-    const { studentId, studentName, email, mobile } = req.body;
+    const { studentId, studentName, email, mobile, referralCode } = req.body;
 
     if (!studentId) {
       return res.status(400).json({ success: false, error: 'Student authentication required.' });
@@ -226,7 +232,8 @@ app.post('/api/razorpay/create-qr', async (req: Request, res: Response) => {
       studentId: String(studentId),
       studentName,
       email,
-      mobile
+      mobile,
+      referralCode: referralCode ? String(referralCode).trim() : undefined
     });
 
     console.log(`[Razorpay QR] Dynamic QR code created: ${qrPayload.qrId} for student ${studentId} (₹${qrPayload.amountRupees})`);
@@ -240,11 +247,11 @@ app.post('/api/razorpay/create-qr', async (req: Request, res: Response) => {
   }
 });
 
-// 2.2 Live QR Code payment status polling endpoint
+// 2.2 Live QR Code payment status polling endpoint with automated referral cashback crediting
 app.get('/api/razorpay/qr-status/:qrId', async (req: Request, res: Response) => {
   try {
     const { qrId } = req.params;
-    const { studentId, planId, studentName, email, mobile } = req.query as Record<string, string>;
+    const { studentId, planId, studentName, email, mobile, referralCode } = req.query as Record<string, string>;
 
     if (!qrId) {
       return res.status(400).json({ success: false, error: 'QR Code ID is required.' });
@@ -256,8 +263,34 @@ app.get('/api/razorpay/qr-status/:qrId', async (req: Request, res: Response) => 
       planId: planId as 'basic' | 'premium',
       studentName,
       email,
-      mobile
+      mobile,
+      referralCode: referralCode ? String(referralCode).trim() : undefined
     });
+
+    // Credit Referral Cashback on verified QR Payment
+    if (statusResult.paid && statusResult.status === 'PAID') {
+      const activeReferralCode = referralCode || (statusResult as any).referralCode;
+      if (activeReferralCode && typeof activeReferralCode === 'string') {
+        try {
+          const attribution = await processReferralPurchase({
+            referralCode: activeReferralCode,
+            buyerStudentId: String(studentId),
+            buyerStudentName: String(studentName || 'Student'),
+            buyerEmail: String(email || ''),
+            buyerMobile: String(mobile || ''),
+            planId: (planId as 'basic' | 'premium') || 'basic',
+            orderId: String(statusResult.orderId || qrId),
+            paymentId: String(statusResult.paymentId)
+          });
+          if (attribution.credited) {
+            console.log(`[QR Referral Credited] Code: ${activeReferralCode} | Referrer: ${attribution.referrerName} (+₹${attribution.referrerReward})`);
+            (statusResult as any).referral = attribution;
+          }
+        } catch (refErr) {
+          console.error('[QR Referral Crediting Error]:', refErr);
+        }
+      }
+    }
 
     return res.json(statusResult);
   } catch (error: any) {
@@ -498,7 +531,7 @@ app.post('/api/razorpay/verify-payment', async (req: Request, res: Response) => 
     let referralResult: any = null;
     if (referralCode && typeof referralCode === 'string') {
       try {
-        const attribution = processReferralPurchase({
+        const attribution = await processReferralPurchase({
           referralCode,
           buyerStudentId: String(studentId),
           buyerStudentName: String(studentName || 'Student'),
@@ -729,7 +762,7 @@ app.post('/api/razorpay/webhook', async (req: Request, res: Response) => {
 
         if (studentId && referralCode) {
           try {
-            processReferralPurchase({
+            await processReferralPurchase({
               referralCode,
               buyerStudentId: studentId,
               buyerStudentName: studentName,
@@ -854,7 +887,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
 // ==========================================
 
 // 7.1 Get or Create User's Referral Profile
-app.get('/api/referrals/account/:userId', (req: Request, res: Response) => {
+app.get('/api/referrals/account/:userId', async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
     const { userType, name, email, mobile, schoolName } = req.query;
@@ -863,7 +896,7 @@ app.get('/api/referrals/account/:userId', (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'User ID required.' });
     }
 
-    const account = getOrCreateReferralAccount(
+    const account = await getOrCreateReferralAccount(
       String(userId),
       (userType as any) || 'student',
       String(name || 'Champion'),
@@ -896,14 +929,14 @@ app.get('/api/referrals/account/:userId', (req: Request, res: Response) => {
 });
 
 // 7.2 Register / Activate Ambassador Account
-app.post('/api/referrals/register', (req: Request, res: Response) => {
+app.post('/api/referrals/register', async (req: Request, res: Response) => {
   try {
     const { userId, userType = 'student', name, email, mobile, schoolName } = req.body;
     if (!userId || !name) {
       return res.status(400).json({ success: false, error: 'User ID and Name are required.' });
     }
 
-    const account = getOrCreateReferralAccount(
+    const account = await getOrCreateReferralAccount(
       String(userId),
       userType === 'teacher' ? 'teacher' : 'student',
       String(name),
@@ -933,8 +966,8 @@ app.post('/api/referrals/validate-code', (req: Request, res: Response) => {
   }
 });
 
-// 7.4 Request Wallet Payout (UPI or Bank)
-app.post('/api/referrals/payout-request', (req: Request, res: Response) => {
+// 7.4 Request Wallet Payout (UPI or Bank) with Automated RazorpayX Dispatch
+app.post('/api/referrals/payout-request', async (req: Request, res: Response) => {
   try {
     const { userId, amount, method, upiId, bankDetails } = req.body;
     if (!userId || !amount || !method) {
@@ -946,7 +979,7 @@ app.post('/api/referrals/payout-request', (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Invalid withdrawal amount.' });
     }
 
-    const result = submitPayoutRequest({
+    const result = await submitPayoutRequest({
       userId: String(userId),
       amount: numAmount,
       method: method === 'BANK' ? 'BANK' : 'UPI',
@@ -971,14 +1004,14 @@ app.get('/api/referrals/leaderboard', (_req: Request, res: Response) => {
 });
 
 // 7.6 Submit Teacher Verification Credentials
-app.post('/api/referrals/teacher-verify', (req: Request, res: Response) => {
+app.post('/api/referrals/teacher-verify', async (req: Request, res: Response) => {
   try {
     const { userId, schoolName, teacherIdNumber, credentialsDocUrl } = req.body;
     if (!userId || !schoolName) {
       return res.status(400).json({ success: false, message: 'School name is required for verification.' });
     }
 
-    const result = submitTeacherVerification({
+    const result = await submitTeacherVerification({
       userId: String(userId),
       schoolName: String(schoolName),
       teacherIdNumber: teacherIdNumber ? String(teacherIdNumber) : undefined,
@@ -1002,14 +1035,14 @@ app.get('/api/referrals/admin/stats', (_req: Request, res: Response) => {
 });
 
 // 7.8 Admin: Verify or Reject Teacher
-app.post('/api/referrals/admin/verify-teacher', (req: Request, res: Response) => {
+app.post('/api/referrals/admin/verify-teacher', async (req: Request, res: Response) => {
   try {
     const { userId, status, notes } = req.body;
     if (!userId || (status !== 'VERIFIED' && status !== 'REJECTED')) {
       return res.status(400).json({ success: false, message: 'Valid userId and status (VERIFIED/REJECTED) required.' });
     }
 
-    const result = reviewTeacherVerification(String(userId), status, notes ? String(notes) : '');
+    const result = await reviewTeacherVerification(String(userId), status, notes ? String(notes) : '');
     return res.json(result);
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
@@ -1017,17 +1050,49 @@ app.post('/api/referrals/admin/verify-teacher', (req: Request, res: Response) =>
 });
 
 // 7.9 Admin: Process Payout Action (Approve / Reject)
-app.post('/api/referrals/admin/payout-action', (req: Request, res: Response) => {
+app.post('/api/referrals/admin/payout-action', async (req: Request, res: Response) => {
   try {
     const { payoutId, action, transactionRef, notes } = req.body;
     if (!payoutId || (action !== 'APPROVE' && action !== 'REJECT')) {
       return res.status(400).json({ success: false, message: 'Valid payoutId and action (APPROVE/REJECT) required.' });
     }
 
-    const result = processPayoutAction(String(payoutId), action, transactionRef, notes);
+    const result = await processPayoutAction(String(payoutId), action, transactionRef, notes);
     return res.json(result);
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 7.9b RazorpayX Payout Webhook endpoint (payout.processed, payout.failed, payout.reversed)
+app.post('/api/razorpayx/webhook', async (req: Request, res: Response) => {
+  try {
+    const signature =
+      (req.headers['x-razorpay-signature'] as string) ||
+      (req.headers['X-Razorpay-Signature'] as string);
+
+    const rawBody = Buffer.isBuffer((req as any).body)
+      ? ((req as any).body as Buffer)
+      : Buffer.from(
+          typeof (req as any).body === 'string'
+            ? (req as any).body
+            : JSON.stringify((req as any).body || {}),
+          'utf8'
+        );
+
+    const isValid = verifyRazorpayXPayoutWebhookSignature(rawBody, signature);
+    if (!isValid) {
+      console.warn('[RazorpayX Webhook] Rejected: Invalid signature');
+      return res.status(400).json({ status: 'error', message: 'Invalid X-Razorpay-Signature.' });
+    }
+
+    const event = JSON.parse(rawBody.toString('utf8'));
+    console.log(`[RazorpayX Payout Webhook Event]: ${event?.event}`);
+    const result = await processRazorpayXPayoutWebhookEvent(event);
+    return res.json({ status: 'ok', ...result });
+  } catch (error: any) {
+    console.error('[RazorpayX Webhook Error]:', error);
+    return res.status(500).json({ status: 'error', message: error.message });
   }
 });
 
