@@ -618,4 +618,475 @@ app.post(['/api/razorpay/verify-payment', '/razorpay/verify-payment'], async (re
       currentExpiresAt
     } = body;
 
-    if (!razorpay_order_id || !razor
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return jsonResponse(res, 400, {
+        success: false,
+        error:
+          'Incomplete transaction information. Missing order ID, payment ID, or signature.'
+      });
+    }
+
+    if (!studentId) {
+      return jsonResponse(res, 400, {
+        success: false,
+        error: 'Student identification missing.'
+      });
+    }
+
+    if (planId !== 'basic' && planId !== 'premium') {
+      return jsonResponse(res, 400, {
+        success: false,
+        error: 'Invalid subscription plan specified for verification.'
+      });
+    }
+
+    if (
+      processedPaymentIds.has(razorpay_payment_id) ||
+      processedOrderIds.has(razorpay_order_id)
+    ) {
+      const existingTx = transactionLedger.find(
+        (t) =>
+          t.paymentId === razorpay_payment_id ||
+          t.orderId === razorpay_order_id
+      );
+      return jsonResponse(res, 200, {
+        success: true,
+        alreadyProcessed: true,
+        transaction: existingTx,
+        message: 'This payment has already been verified and activated.'
+      });
+    }
+
+    const creds = getResolvedRazorpayCredentials();
+    if (!creds.isConfigured || !creds.keySecret) {
+      return jsonResponse(res, 500, {
+        success: false,
+        error: 'Razorpay LIVE API credentials are not configured on the server.'
+      });
+    }
+
+    const expectedSignature = crypto
+      .createHmac('sha256', creds.keySecret)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
+
+    const expectedBuf = Buffer.from(expectedSignature, 'utf8');
+    const providedBuf = Buffer.from(String(razorpay_signature).trim(), 'utf8');
+    const isSignatureValid =
+      expectedBuf.length === providedBuf.length &&
+      crypto.timingSafeEqual(expectedBuf, providedBuf);
+
+    if (!isSignatureValid) {
+      return jsonResponse(res, 400, {
+        success: false,
+        error:
+          'Cryptographic payment signature mismatch. Payment verification failed.'
+      });
+    }
+
+    const expectedAmountPaise = planId === 'premium' ? 9900 : 4900;
+    const captureCheck = await verifyAndCaptureRazorpayPayment(
+      creds,
+      razorpay_payment_id,
+      expectedAmountPaise
+    );
+
+    if (!captureCheck.confirmed) {
+      return jsonResponse(res, 400, {
+        success: false,
+        error:
+          captureCheck.error ||
+          'Payment was not confirmed as captured by Razorpay API.'
+      });
+    }
+
+    const now = new Date();
+    const startDateIso = now.toISOString().split('T')[0];
+    let baseDate = new Date(now);
+
+    if (currentExpiresAt && new Date(currentExpiresAt) > now) {
+      baseDate = new Date(currentExpiresAt);
+    }
+
+    const expiryDate = new Date(baseDate);
+    expiryDate.setDate(expiryDate.getDate() + 90);
+    const expiryDateIso = expiryDate.toISOString().split('T')[0];
+    const daysRemaining = Math.max(
+      1,
+      Math.round((expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+    );
+
+    const verifiedAmount = planId === 'premium' ? 99 : 49;
+    const planTitle =
+      planId === 'premium'
+        ? 'PREMIUM PLAN – ₹99 – 90 Days'
+        : 'STANDARD PLAN – ₹49 – 90 Days';
+    const subscriptionTier = planId === 'premium' ? 'premium' : 'standard';
+    const receiptNumber = `REC-VC-${Date.now().toString().slice(-6)}`;
+    const resolvedMethod = captureCheck.method || payMethod || 'RAZORPAY';
+
+    const transactionRecord = {
+      id: `tx_${razorpay_payment_id}`,
+      receiptNumber,
+      studentId: String(studentId),
+      studentName: String(studentName || 'Student'),
+      parentEmail: String(email || ''),
+      parentMobile: String(mobile || ''),
+      planId,
+      planTitle,
+      amount: verifiedAmount,
+      currency: 'INR',
+      orderId: razorpay_order_id,
+      paymentId: razorpay_payment_id,
+      signature: razorpay_signature,
+      method: resolvedMethod,
+      status: 'SUCCESS',
+      createdAt: now.toISOString(),
+      verifiedAt: now.toISOString(),
+      membershipStartDate: startDateIso,
+      membershipExpiryDate: expiryDateIso
+    };
+
+    const membershipRecord = {
+      membershipId: `mem_${razorpay_payment_id}`,
+      studentId: String(studentId),
+      studentName: String(studentName || 'Student'),
+      planId,
+      planTitle,
+      amount: verifiedAmount,
+      startDate: startDateIso,
+      expiryDate: expiryDateIso,
+      status: 'ACTIVE',
+      paymentId: razorpay_payment_id,
+      orderId: razorpay_order_id,
+      daysRemaining
+    };
+
+    processedPaymentIds.add(razorpay_payment_id);
+    processedOrderIds.add(razorpay_order_id);
+    transactionLedger.unshift(transactionRecord);
+
+    await Promise.all([
+      patchFirestoreDocument('students', String(studentId), {
+        id: String(studentId),
+        plan: planId,
+        subscriptionTier,
+        planLabel: planTitle,
+        isLifetimeFree: false,
+        planPurchasedAt: startDateIso,
+        planExpiresAt: expiryDateIso,
+        subscriptionValidityDays: 90,
+        subscriptionStatus: 'ACTIVE',
+        lastPaymentId: razorpay_payment_id,
+        lastOrderId: razorpay_order_id,
+        lastPaymentAmountInr: verifiedAmount,
+        subscriptionUpdatedAt: now.toISOString()
+      }),
+      patchFirestoreDocument('transactions', `tx_${razorpay_payment_id}`, {
+        ...transactionRecord,
+        subscriptionTier,
+        savedToFirestoreAt: now.toISOString()
+      })
+    ]);
+
+    return jsonResponse(res, 200, {
+      success: true,
+      alreadyProcessed: false,
+      transaction: transactionRecord,
+      membership: membershipRecord
+    });
+  } catch (err) {
+    return jsonResponse(res, 500, {
+      success: false,
+      error: err?.message || 'Internal server error during payment verification.'
+    });
+  }
+});
+
+// 4. POST /api/razorpay/payment-failed
+app.post(['/api/razorpay/payment-failed', '/razorpay/payment-failed'], async (req, res) => {
+  try {
+    const body = req.body || {};
+    const {
+      orderId,
+      paymentId,
+      planId = 'premium',
+      studentId = 'unknown',
+      studentName = 'Student',
+      email = '',
+      mobile = '',
+      reason = 'Payment cancelled or declined'
+    } = body;
+
+    const failedTx = {
+      id: `tx_failed_${Date.now()}`,
+      receiptNumber: `FAIL-VC-${Date.now().toString().slice(-6)}`,
+      studentId: String(studentId),
+      studentName: String(studentName),
+      parentEmail: String(email),
+      parentMobile: String(mobile),
+      planId: planId === 'basic' ? 'basic' : 'premium',
+      planTitle:
+        planId === 'basic'
+          ? 'STANDARD PLAN – ₹49 – 90 Days'
+          : 'PREMIUM PLAN – ₹99 – 90 Days',
+      amount: planId === 'basic' ? 49 : 99,
+      currency: 'INR',
+      orderId: orderId || `ord_failed_${Date.now()}`,
+      paymentId: paymentId || `pay_failed_${Date.now()}`,
+      signature: 'failed_or_cancelled',
+      method: 'RAZORPAY',
+      status: 'FAILED',
+      createdAt: new Date().toISOString(),
+      reason
+    };
+
+    transactionLedger.unshift(failedTx);
+    return jsonResponse(res, 200, {
+      success: true,
+      recorded: true,
+      transaction: failedTx
+    });
+  } catch (err) {
+    return jsonResponse(res, 500, {
+      success: false,
+      error: err?.message || 'Error recording failed payment.'
+    });
+  }
+});
+
+// 5. POST /api/razorpay/webhook
+app.post(
+  ['/api/razorpay/webhook', '/razorpay/webhook', '/api/webhook', '/webhook'],
+  async (req, res) => {
+    try {
+      const signature =
+        req.headers['x-razorpay-signature'] ||
+        req.headers['X-Razorpay-Signature'];
+      const rawBody = req.rawBody || '';
+      const creds = getResolvedRazorpayCredentials();
+
+      if (!signature || (!creds.webhookSecret && !creds.keySecret)) {
+        return jsonResponse(res, 400, {
+          status: 'error',
+          message: 'Missing webhook signature or secret.'
+        });
+      }
+
+      const secrets = [creds.webhookSecret, creds.keySecret].filter(Boolean);
+      let validSig = false;
+      for (const sec of secrets) {
+        const expected = crypto
+          .createHmac('sha256', sec)
+          .update(rawBody)
+          .digest('hex');
+        if (
+          expected.length === signature.trim().length &&
+          crypto.timingSafeEqual(
+            Buffer.from(expected, 'utf8'),
+            Buffer.from(signature.trim(), 'utf8')
+          )
+        ) {
+          validSig = true;
+          break;
+        }
+      }
+
+      if (!validSig) {
+        return jsonResponse(res, 400, {
+          status: 'error',
+          message: 'Invalid X-Razorpay-Signature.'
+        });
+      }
+
+      const payload = JSON.parse(rawBody);
+      const eventType = String(payload?.event || '');
+
+      if (eventType === 'payment.captured' || eventType === 'order.paid') {
+        const paymentEntity = payload?.payload?.payment?.entity || {};
+        const orderEntity = payload?.payload?.order?.entity || {};
+        const notes = {
+          ...(orderEntity.notes || {}),
+          ...(paymentEntity.notes || {})
+        };
+        const studentId = String(notes.studentId || '').trim();
+        const paymentId = String(paymentEntity.id || '').trim();
+        const orderId = String(
+          paymentEntity.order_id || orderEntity.id || ''
+        ).trim();
+        const amountPaise = Number(
+          paymentEntity.amount || orderEntity.amount || 0
+        );
+        const planId =
+          String(notes.planId || '').toLowerCase() === 'premium' ||
+          amountPaise >= 9900
+            ? 'premium'
+            : 'basic';
+
+        if (studentId && paymentId) {
+          const now = new Date();
+          const startDateIso = now.toISOString().split('T')[0];
+          const expiryDate = new Date(now);
+          expiryDate.setDate(expiryDate.getDate() + 90);
+          const expiryDateIso = expiryDate.toISOString().split('T')[0];
+          const amountInr = planId === 'premium' ? 99 : 49;
+          const planTitle =
+            planId === 'premium'
+              ? 'PREMIUM PLAN – ₹99 – 90 Days'
+              : 'STANDARD PLAN – ₹49 – 90 Days';
+
+          await patchFirestoreDocument('students', studentId, {
+            id: studentId,
+            plan: planId,
+            subscriptionTier: planId === 'premium' ? 'premium' : 'standard',
+            planLabel: planTitle,
+            isLifetimeFree: false,
+            planPurchasedAt: startDateIso,
+            planExpiresAt: expiryDateIso,
+            subscriptionValidityDays: 90,
+            subscriptionStatus: 'ACTIVE',
+            lastPaymentId: paymentId,
+            lastOrderId: orderId,
+            lastPaymentAmountInr: amountInr,
+            subscriptionUpdatedAt: now.toISOString()
+          });
+
+          return jsonResponse(res, 200, {
+            status: 'ok',
+            event: eventType,
+            studentId,
+            plan: planId,
+            planExpiresAt: expiryDateIso,
+            validityDays: 90
+          });
+        }
+      }
+
+      return jsonResponse(res, 200, { status: 'ok', event: eventType });
+    } catch (err) {
+      return jsonResponse(res, 500, {
+        status: 'error',
+        message: err?.message || 'Webhook processing error.'
+      });
+    }
+  }
+);
+
+// 6. POST /api/subscription/sync
+app.post(['/api/subscription/sync', '/subscription/sync'], async (req, res) => {
+  try {
+    const body = req.body || {};
+    return jsonResponse(res, 200, {
+      success: true,
+      subscription: {
+        studentId: body.studentId,
+        plan: body.plan || 'free',
+        planPurchasedAt: body.planPurchasedAt,
+        planExpiresAt: body.planExpiresAt,
+        status: 'ACTIVE',
+        updatedAt: new Date().toISOString()
+      }
+    });
+  } catch (err) {
+    return jsonResponse(res, 500, { success: false, error: err?.message });
+  }
+});
+
+// 7. GET /api/subscription/status/:studentId
+app.get(['/api/subscription/status/:studentId', '/subscription/status/:studentId'], async (req, res) => {
+  const studentId = req.params.studentId;
+  const docData = await getFirestoreDocument('students', studentId);
+  return jsonResponse(res, 200, {
+    success: true,
+    subscription: {
+      studentId,
+      plan: docData?.plan || 'free',
+      planPurchasedAt: docData?.planPurchasedAt || null,
+      planExpiresAt: docData?.planExpiresAt || null,
+      status: 'ACTIVE'
+    }
+  });
+});
+
+// 8. GET /api/payments/history
+app.get(['/api/payments/history', '/payments/history'], (req, res) => {
+  return jsonResponse(res, 200, {
+    success: true,
+    transactions: transactionLedger
+  });
+});
+
+// 9. POST /api/ai/chat
+app.post(['/api/ai/chat', '/ai/chat'], async (req, res) => {
+  try {
+    const body = req.body || {};
+    const message = body.message || '';
+    const language = body.language || 'en';
+    let reply =
+      'Welcome to Vacation Champions! We provide 14 school curriculum subjects, 45+ audio moral stories, and scholarship practice.';
+    const q = message.toLowerCase();
+    if (
+      q.includes('plan') ||
+      q.includes('price') ||
+      q.includes('subscription') ||
+      q.includes('49') ||
+      q.includes('99') ||
+      q.includes('शुल्क')
+    ) {
+      reply =
+        language === 'mr'
+          ? 'व्हेकेशन चॅम्पियन्सवर ३ प्लॅन्स आहेत: १) मोफत प्लॅन (₹०) २) स्टँडर्ड प्लॅन (₹४९, पूर्ण ९० दिवस) ३) प्रीमियम प्लॅन (₹९९, पूर्ण ९० दिवस - सर्व फिचर्स अनलॉक).'
+          : language === 'hi'
+          ? 'वेकेशन चैंपियंस में ३ प्लान हैं: १) फ्री प्लान (₹०) २) स्टैंडर्ड प्लान (₹४९, ९० दिन) ३) प्रीमियम प्लान (₹९९, ९० दिन - सभी फीचर्स).'
+          : 'Vacation Champions offers: 1) FREE Plan (₹0) 2) Standard Plan (₹49 for 90 days) 3) Premium Plan (₹99 for 90 days with full unlock).';
+    } else if (
+      q.includes('pay') ||
+      q.includes('qr') ||
+      q.includes('razorpay') ||
+      q.includes('पेमेंट')
+    ) {
+      reply =
+        language === 'mr'
+          ? 'तुम्ही अधिकृत Razorpay किंवा UPI QR कोड द्वारे Google Pay, PhonePe किंवा Paytm ने सुरक्षित पेमेंट करू शकता.'
+          : language === 'hi'
+          ? 'आप Razorpay ऑनलाइन या UPI QR कोड से Google Pay, PhonePe या Paytm द्वारा भुगतान कर सकते हैं।'
+          : 'You can pay securely via Razorpay Checkout or Dynamic UPI QR Code using Google Pay, PhonePe, or Paytm.';
+    } else if (
+      q.includes('help') ||
+      q.includes('support') ||
+      q.includes('ticket') ||
+      q.includes('तक्रार') ||
+      q.includes('मदत')
+    ) {
+      reply =
+        language === 'mr'
+          ? 'मदतीसाठी हेल्प अँड सपोर्ट विभागात तिकीट (TKT-VC-XXXXX) किंवा तक्रार निवारण विभागात तक्रार नोंदवा.'
+          : language === 'hi'
+          ? 'सहायता के लिए हेल्प एंड सपोर्ट पेज पर टिकट या ग्रीवेंस रिड्रेसल में शिकायत दर्ज करें।'
+          : 'For assistance, create a support ticket (TKT-VC-XXXXX) or lodge a formal grievance (GRV-VC-XXXXX).';
+    }
+    return jsonResponse(res, 200, {
+      success: true,
+      reply,
+      source: 'knowledge_base_fallback',
+      language
+    });
+  } catch (err) {
+    return jsonResponse(res, 500, { success: false, error: err?.message });
+  }
+});
+
+// 404 Fallback
+app.use((req, res) => {
+  return jsonResponse(res, 404, {
+    success: false,
+    error: `API route not found: ${req.method} ${req.originalUrl}`
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
+
+          
