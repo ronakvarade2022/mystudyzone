@@ -27,7 +27,6 @@ import { TermsAndPrivacyView } from './components/TermsAndPrivacyView';
 import { AboutUsView } from './components/AboutUsView';
 import { ContactUsView } from './components/ContactUsView';
 import { FaqsView } from './components/FaqsView';
-import { FloatingAiChatbot } from './components/FloatingAiChatbot';
 import { SubjectName, QuizLevel } from './types';
 import { canAccessFeature, canAccessSubject } from './utils/subscriptionAccess';
 import { Trophy } from 'lucide-react';
@@ -403,9 +402,6 @@ const AppContent: React.FC = () => {
           setIsAuthModalOpen(true);
         }}
       />
-
-      {/* Global Floating Trilingual Gemini AI Chatbot */}
-      <FloatingAiChatbot onNavigateTab={handleNavigateTab} />
 
       {/* Footer */}
       <footer className="bg-white border-t border-amber-200/80 py-8 text-center text-xs text-slate-500">
