@@ -1075,7 +1075,8 @@ app.post(['/api/ai/chat', '/ai/chat'], async (req, res) => {
     return jsonResponse(res, 500, { success: false, error: err?.message });
   }
 });
-
+app.use(express.static('dist'));
+app.get('*', (req, res) => res.sendFile('index.html', { root: 'dist' }));
 // 404 Fallback
 app.use((req, res) => {
   return jsonResponse(res, 404, {
@@ -1083,8 +1084,6 @@ app.use((req, res) => {
     error: `API route not found: ${req.method} ${req.originalUrl}`
   });
 });
-app.use(express.static('dist'));
-app.get('*', (req, res) => res.sendFile('index.html', { root: 'dist' }));
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
